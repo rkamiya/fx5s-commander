@@ -1,6 +1,6 @@
 """PLC デバイスの表現と検証。
 
-PC から書き込めるデバイスを M（内部リレー）に限定する。X（物理入力）や Y（物理出力）、
+PC から読み書きするデバイスを M（内部リレー）に限定する。X（物理入力）や Y（物理出力）、
 D（データレジスタ）を誤って書き換えないよう、ここで受け付けるデバイスの種類と範囲を絞る。
 """
 
@@ -32,7 +32,7 @@ def parse_device(text: str) -> Device:
         raise ValueError(f"デバイスの形式が正しくありません: {text!r}")
     kind, number_text = match.group(1).upper(), match.group(2)
     if kind != "M":
-        raise ValueError(f"書き込みに使えるのは M デバイスのみです: {text!r}")
+        raise ValueError(f"指定できるのは M デバイスのみです: {text!r}")
     number = int(number_text)
     if number > M_DEVICE_MAX:
         raise ValueError(f"M デバイスの範囲（M0〜M{M_DEVICE_MAX}）外です: {text!r}")

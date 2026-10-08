@@ -125,6 +125,11 @@ class CommandSender:
             f"{command.label} 指令を PLC が受け付けました（設備の動作は別途確認してください）。",
         )
 
+    @property
+    def client(self) -> PlcClient:
+        """今の接続。ワーカースレッドからだけ使うこと。"""
+        return self._client
+
     def reconfigure(self, client: PlcClient, devices: Mapping[Command, Device]) -> None:
         """接続先とリレーの割り当てを切り替える。今の接続は閉じる。"""
         self._client.close()

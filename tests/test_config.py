@@ -9,10 +9,11 @@ from fx5s_commander.config import (
     dump_config,
     load_config,
     parse_config,
-    parse_devices,
+    parse_relays,
     save_config,
 )
 from fx5s_commander.devices import Device
+from fx5s_commander.monitor import Lamp
 
 EXAMPLE = Path(__file__).resolve().parents[1] / "config.example.toml"
 
@@ -56,6 +57,9 @@ def test_overrides():
         {"devices": {"on": "Y0"}},
         {"devices": {"on": "M101"}},  # off と重複
         {"handshake": {"poll_interval_sec": -1}},
+        {"lamps": {"running": "M100"}},  # 指令と重複
+        {"lamps": {"stopped": "Y0"}},
+        {"monitor": {"interval_sec": 0.05}},
         {"handshake": {"ack_timeout_sec": True}},
         {"connection": "192.168.1.20"},
     ],
@@ -82,7 +86,9 @@ def test_save_and_load_round_trip(tmp_path):
         {
             "connection": {"host": "10.0.0.5", "port": 6000, "timeout_sec": 1.5, "mock": True},
             "devices": {"on": "M200", "off": "M201", "stop": "M202"},
+            "lamps": {"running": "M210", "stopped": "M211"},
             "handshake": {"ack_timeout_sec": 0.8, "poll_interval_sec": 0.02},
+            "monitor": {"interval_sec": 1},
         }
     )
     path = tmp_path / "sub" / "config.toml"
@@ -99,24 +105,34 @@ def test_dump_default_is_loadable():
     assert parse_config(tomllib.loads(dump_config(default_config()))) == default_config()
 
 
-def test_parse_devices():
-    devices = parse_devices({Command.ON: "m10", Command.OFF: "M11", Command.STOP: " M12 "})
+COMMANDS = {Command.ON: "M10", Command.OFF: "M11", Command.STOP: "M12"}
+LAMPS = {Lamp.RUNNING: "M20", Lamp.STOPPED: "M21"}
+
+
+def test_parse_relays():
+    devices, lamps = parse_relays(
+        {Command.ON: "m10", Command.OFF: "M11", Command.STOP: " M12 "}, LAMPS
+    )
     assert devices == {
         Command.ON: Device("M", 10),
         Command.OFF: Device("M", 11),
         Command.STOP: Device("M", 12),
     }
+    assert lamps == {Lamp.RUNNING: Device("M", 20), Lamp.STOPPED: Device("M", 21)}
 
 
 @pytest.mark.parametrize(
-    ("texts", "expected"),
+    ("commands", "lamps", "expected"),
     [
-        ({Command.ON: "Y0", Command.OFF: "M11", Command.STOP: "M12"}, "ON"),
-        ({Command.ON: "M10", Command.OFF: "", Command.STOP: "M12"}, "OFF"),
-        ({Command.ON: "M10", Command.OFF: "M11", Command.STOP: "M99999"}, "停止要求"),
-        ({Command.ON: "M10", Command.OFF: "M10", Command.STOP: "M12"}, "複数"),
+        ({**COMMANDS, Command.ON: "Y0"}, LAMPS, "ON"),
+        ({**COMMANDS, Command.OFF: ""}, LAMPS, "OFF"),
+        ({**COMMANDS, Command.STOP: "M99999"}, LAMPS, "停止要求"),
+        (COMMANDS, {**LAMPS, Lamp.RUNNING: "X0"}, "稼働中ランプ"),
+        ({**COMMANDS, Command.OFF: "M10"}, LAMPS, "複数"),
+        (COMMANDS, {**LAMPS, Lamp.STOPPED: "M20"}, "複数"),
+        (COMMANDS, {**LAMPS, Lamp.STOPPED: "M12"}, "複数"),
     ],
 )
-def test_parse_devices_invalid(texts, expected):
+def test_parse_relays_invalid(commands, lamps, expected):
     with pytest.raises(ConfigError, match=expected):
-        parse_devices(texts)
+        parse_relays(commands, lamps)

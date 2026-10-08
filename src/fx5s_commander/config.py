@@ -13,6 +13,7 @@ from typing import Any
 
 from fx5s_commander.commands import Command
 from fx5s_commander.devices import Device, parse_device
+from fx5s_commander.monitor import Lamp
 
 PLC_TYPES = ("Q", "L", "QnA", "iQ-L", "iQ-R")
 
@@ -49,15 +50,37 @@ DEFAULT_DEVICES = {
 }
 
 
+DEFAULT_LAMPS = {
+    Lamp.RUNNING: Device("M", 300),
+    Lamp.STOPPED: Device("M", 301),
+}
+
+
+@dataclass(frozen=True)
+class MonitorConfig:
+    interval_sec: float = 0.5
+    """ランプを読み出す間隔（秒）。"""
+
+
 @dataclass(frozen=True)
 class AppConfig:
     connection: ConnectionConfig
     devices: dict[Command, Device]
+    """各指令で書き込むリレー。"""
+    lamps: dict[Lamp, Device]
+    """各ランプで読み出すリレー。"""
     handshake: HandshakeConfig
+    monitor: MonitorConfig
 
 
 def default_config() -> AppConfig:
-    return AppConfig(ConnectionConfig(), dict(DEFAULT_DEVICES), HandshakeConfig())
+    return AppConfig(
+        ConnectionConfig(),
+        dict(DEFAULT_DEVICES),
+        dict(DEFAULT_LAMPS),
+        HandshakeConfig(),
+        MonitorConfig(),
+    )
 
 
 def load_config(path: Path) -> AppConfig:
@@ -85,14 +108,18 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     validate_connection(connection)
 
     dev = _section(data, "devices")
-    texts = {
+    command_texts = {
         command: _get(dev, f"devices.{command.value}", str, str(defaults.devices[command]))
         for command in Command
     }
+    lmp = _section(data, "lamps")
+    lamp_texts = {
+        lamp: _get(lmp, f"lamps.{lamp.value}", str, str(defaults.lamps[lamp])) for lamp in Lamp
+    }
     try:
-        devices = parse_devices(texts)
+        devices, lamps = parse_relays(command_texts, lamp_texts)
     except ConfigError as e:
-        raise ConfigError(f"[devices] {e}") from e
+        raise ConfigError(f"[devices] / [lamps] {e}") from e
 
     hs = _section(data, "handshake")
     handshake = HandshakeConfig(
@@ -106,20 +133,40 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     if handshake.ack_timeout_sec <= 0 or handshake.poll_interval_sec <= 0:
         raise ConfigError("handshake の時間は正の値で指定してください")
 
-    return AppConfig(connection, devices, handshake)
+    mon = _section(data, "monitor")
+    monitor = MonitorConfig(
+        interval_sec=_get(mon, "monitor.interval_sec", float, defaults.monitor.interval_sec)
+    )
+    if monitor.interval_sec < 0.1:
+        raise ConfigError("monitor.interval_sec は 0.1 以上で指定してください")
+
+    return AppConfig(connection, devices, lamps, handshake, monitor)
 
 
-def parse_devices(texts: Mapping[Command, str]) -> dict[Command, Device]:
-    """各指令のデバイス（'M100' など）を検証して変換する。M 以外や重複は ConfigError。"""
+def parse_relays(
+    command_texts: Mapping[Command, str], lamp_texts: Mapping[Lamp, str]
+) -> tuple[dict[Command, Device], dict[Lamp, Device]]:
+    """指令用とランプ用のリレー（'M100' など）を検証して変換する。
+
+    M 以外や、同じリレーを複数の用途に割り当てた場合は ConfigError。
+    """
     devices: dict[Command, Device] = {}
     for command in Command:
-        try:
-            devices[command] = parse_device(texts[command])
-        except ValueError as e:
-            raise ConfigError(f"{command.label}: {e}") from e
-    if len(set(devices.values())) != len(devices):
-        raise ConfigError("同じリレーが複数の指令に割り当てられています")
-    return devices
+        devices[command] = _parse_relay(command_texts[command], command.label)
+    lamps: dict[Lamp, Device] = {}
+    for lamp in Lamp:
+        lamps[lamp] = _parse_relay(lamp_texts[lamp], f"{lamp.label}ランプ")
+    used = [*devices.values(), *lamps.values()]
+    if len(set(used)) != len(used):
+        raise ConfigError("同じリレーが複数の用途に割り当てられています")
+    return devices, lamps
+
+
+def _parse_relay(text: str, name: str) -> Device:
+    try:
+        return parse_device(text)
+    except ValueError as e:
+        raise ConfigError(f"{name}: {e}") from e
 
 
 def validate_connection(connection: ConnectionConfig) -> None:
@@ -160,9 +207,15 @@ def dump_config(config: AppConfig) -> str:
         "[devices]",
         *(f'{command.value} = "{device}"' for command, device in config.devices.items()),
         "",
+        "[lamps]",
+        *(f'{lamp.value} = "{device}"' for lamp, device in config.lamps.items()),
+        "",
         "[handshake]",
         f"ack_timeout_sec = {hs.ack_timeout_sec!r}",
         f"poll_interval_sec = {hs.poll_interval_sec!r}",
+        "",
+        "[monitor]",
+        f"interval_sec = {config.monitor.interval_sec!r}",
     ]
     return "\n".join(lines) + "\n"
 

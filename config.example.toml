@@ -20,9 +20,18 @@ on = "M100"
 off = "M101"
 stop = "M102"
 
+[lamps]
+# 各ランプが読み出す内部リレー（読み出しのみ）。M デバイスのみ指定可能。
+running = "M300"  # 稼働中
+stopped = "M301"  # 停止中
+
 [handshake]
 # PC が M を ON にした後、ラダーが OFF に戻すまで待つ時間（秒）。
 # この時間内に OFF に戻らなければ、PC 側で OFF に戻して指令を取り消す。
 ack_timeout_sec = 1.0
 # PLC の状態を読み直す間隔（秒）
 poll_interval_sec = 0.05
+
+[monitor]
+# ランプを読み出す間隔（秒）。0.1 以上。
+interval_sec = 0.5

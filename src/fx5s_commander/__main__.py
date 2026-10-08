@@ -7,7 +7,6 @@ import logging
 import queue
 import sys
 import tkinter as tk
-from collections.abc import Iterable
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from tkinter import messagebox
@@ -17,14 +16,12 @@ from fx5s_commander.commands import CommandSender
 from fx5s_commander.config import (
     AppConfig,
     ConfigError,
-    ConnectionConfig,
     default_config,
     load_config,
 )
-from fx5s_commander.devices import Device
 from fx5s_commander.gui import App
 from fx5s_commander.plc.client import GuardedPlcClient, PlcClient
-from fx5s_commander.plc.mock import MockPlcClient
+from fx5s_commander.plc.mock import MockPlcClient, simulate_ladder
 from fx5s_commander.plc.slmp import SlmpPlcClient
 from fx5s_commander.worker import TaskWorker
 
@@ -54,7 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     sender = CommandSender(
-        build_client(config.connection, config.devices.values()),
+        build_client(config),
         config.devices,
         ack_timeout_sec=config.handshake.ack_timeout_sec,
         poll_interval_sec=config.handshake.poll_interval_sec,
@@ -79,10 +76,14 @@ def main(argv: list[str] | None = None) -> int:
     return 0
 
 
-def build_client(connection: ConnectionConfig, allowed_writes: Iterable[Device]) -> PlcClient:
+def build_client(config: AppConfig) -> PlcClient:
+    """設定に従って PLC クライアントを作る。書き込みは指令用のリレーだけに制限する。"""
+    connection = config.connection
     inner: PlcClient
     if connection.mock:
-        inner = MockPlcClient()
+        mock = MockPlcClient()
+        simulate_ladder(mock, config.devices, config.lamps)
+        inner = mock
     else:
         inner = SlmpPlcClient(
             connection.host,
@@ -90,7 +91,7 @@ def build_client(connection: ConnectionConfig, allowed_writes: Iterable[Device])
             plc_type=connection.plc_type,
             timeout_sec=connection.timeout_sec,
         )
-    return GuardedPlcClient(inner, allowed_writes)
+    return GuardedPlcClient(inner, config.devices.values())
 
 
 def setup_logging(log_file: Path) -> None:

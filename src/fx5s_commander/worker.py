@@ -8,6 +8,9 @@ pymcprotocol はスレッドセーフではないので、PLC へのアクセス
   押した操作が後からまとめて実行されるのを防ぐため、キューに溜めない。
 - 優先タスク（停止要求）は処理中でも受け付け、待ちの通常タスクより先に実行する。
   ただし実行中のタスクを中断はしないので、最大でハンドシェイク 1 回分待つ。
+- バックグラウンドタスク（ランプの読み出し）は、ほかのタスクがすべて終わってから実行する。
+  処理中かどうか（busy）の判定には含めないので、読み出し中でも ON / OFF を受け付ける。
+  待ちは 1 件までで、既に待ちがあれば受け付けない。
 """
 
 from __future__ import annotations
@@ -23,7 +26,8 @@ logger = logging.getLogger(__name__)
 
 _PRIORITY_HIGH = 0
 _PRIORITY_NORMAL = 1
-_PRIORITY_SHUTDOWN = 2  # 受付済みのタスクをすべて終えてから止める
+_PRIORITY_BACKGROUND = 2
+_PRIORITY_SHUTDOWN = 3  # 受付済みのタスクをすべて終えてから止める
 
 
 class TaskWorker:
@@ -45,6 +49,7 @@ class TaskWorker:
         self._lock = threading.Lock()
         self._pending = 0
         self._high_queued = False
+        self._background_pending = False
         self._closing = False
         self._thread = threading.Thread(target=self._run, name="plc-worker", daemon=True)
 
@@ -74,6 +79,15 @@ class TaskWorker:
         self._queue.put((level, next(self._seq), task))
         return True
 
+    def submit_background(self, task: Callable[[], Any]) -> bool:
+        """バックグラウンドタスクを受け付けたら True。待ちや実行中のものがあれば False。"""
+        with self._lock:
+            if self._closing or self._background_pending:
+                return False
+            self._background_pending = True
+        self._queue.put((_PRIORITY_BACKGROUND, next(self._seq), task))
+        return True
+
     def shutdown(self, timeout: float | None = None) -> None:
         with self._lock:
             if self._closing:
@@ -96,7 +110,10 @@ class TaskWorker:
                 logger.exception("タスクの実行中に予期しないエラーが発生しました")
                 result = e
             with self._lock:
-                self._pending -= 1
+                if level == _PRIORITY_BACKGROUND:
+                    self._background_pending = False
+                else:
+                    self._pending -= 1
             self._on_done(result)
         if self._on_exit is not None:
             try:

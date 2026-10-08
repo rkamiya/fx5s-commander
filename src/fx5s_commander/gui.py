@@ -2,6 +2,7 @@
 
 画面は表示と入力だけを担当し、PLC との通信は TaskWorker 経由でバックグラウンドで行う。
 ワーカーからの結果はキューで受け取り、after() で定期的に取り出して画面に反映する。
+ランプは一定間隔で PLC から読み出す（読み出しは指令の送信より後回しにする）。
 """
 
 from __future__ import annotations
@@ -9,8 +10,8 @@ from __future__ import annotations
 import logging
 import queue
 import tkinter as tk
-from collections.abc import Callable, Iterable
-from dataclasses import dataclass, replace
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from tkinter import scrolledtext
@@ -24,15 +25,17 @@ from fx5s_commander.commands import (
     Outcome,
     check_connection,
 )
-from fx5s_commander.config import AppConfig, ConnectionConfig, save_config
+from fx5s_commander.config import AppConfig, save_config
 from fx5s_commander.devices import Device
+from fx5s_commander.monitor import Lamp, LampReading, read_lamps
 from fx5s_commander.plc.client import PlcClient
-from fx5s_commander.settings_window import DeviceMap, SettingsWindow
+from fx5s_commander.settings_window import SettingsWindow
 from fx5s_commander.worker import TaskWorker
 
 logger = logging.getLogger(__name__)
 
 _POLL_MS = 50
+_LAMP_RETRY_MS = 3000  # 読み出しに失敗したときは間隔を空けて再接続する
 _SHUTDOWN_TIMEOUT_SEC = 5.0
 
 _BUTTON_COLORS = {
@@ -49,9 +52,49 @@ _OUTCOME_COLORS = {
 }
 
 
+_LAMP_COLORS = {
+    Lamp.RUNNING: "#43a047",
+    Lamp.STOPPED: "#e53935",
+}
+_LAMP_OFF_COLOR = "#5f6368"
+_LAMP_UNKNOWN_COLOR = "#d6d6d6"
+
+
 @dataclass(frozen=True)
 class SettingsApplied:
     config: AppConfig
+
+
+class LampIndicator:
+    """丸いランプ 1 個と、その名前・リレーの表示。"""
+
+    _SIZE = 32
+
+    def __init__(self, parent: tk.Widget, lamp: Lamp, device: Device) -> None:
+        self._lamp = lamp
+        self.frame = tk.Frame(parent)
+        self._canvas = tk.Canvas(
+            self.frame, width=self._SIZE, height=self._SIZE, highlightthickness=0
+        )
+        self._canvas.pack(side=tk.LEFT)
+        self._circle = self._canvas.create_oval(
+            2, 2, self._SIZE - 2, self._SIZE - 2, outline="#9e9e9e", width=1
+        )
+        self._label = tk.Label(self.frame, justify=tk.LEFT, font=("", 11, "bold"))
+        self._label.pack(side=tk.LEFT, padx=(6, 0))
+        self.set_device(device)
+        self.set_state(None)
+
+    def set_device(self, device: Device) -> None:
+        self._label.config(text=f"{self._lamp.label}\n({device})")
+
+    def set_state(self, on: bool | None) -> None:
+        """None は状態が分からない（未読み出し・通信エラー）ことを表す。"""
+        if on is None:
+            color = _LAMP_UNKNOWN_COLOR
+        else:
+            color = _LAMP_COLORS[self._lamp] if on else _LAMP_OFF_COLOR
+        self._canvas.itemconfig(self._circle, fill=color)
 
 
 class App:
@@ -62,7 +105,7 @@ class App:
         config: AppConfig,
         config_path: Path,
         sender: CommandSender,
-        client_factory: Callable[[ConnectionConfig, Iterable[Device]], PlcClient],
+        client_factory: Callable[[AppConfig], PlcClient],
         worker: TaskWorker,
         results: queue.Queue[Any],
     ) -> None:
@@ -74,6 +117,7 @@ class App:
         self._worker = worker
         self._results = results
         self._settings: SettingsWindow | None = None
+        self._lamps_readable: bool | None = None
 
         root.minsize(420, 420)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -87,6 +131,17 @@ class App:
         self._target.pack(side=tk.LEFT)
         tk.Button(header, text="設定", command=self._open_settings).pack(side=tk.RIGHT)
         self._update_target()
+
+        lamps = tk.Frame(frame, pady=12)
+        lamps.pack(fill=tk.X)
+        self._lamps: dict[Lamp, LampIndicator] = {}
+        for column, lamp in enumerate(Lamp):
+            indicator = LampIndicator(lamps, lamp, config.lamps[lamp])
+            indicator.frame.grid(row=0, column=column, padx=4)
+            lamps.columnconfigure(column, weight=1, uniform="lamp")
+            self._lamps[lamp] = indicator
+        self._lamp_status = tk.Label(frame, text="ランプ: 読み出し待ち", fg="#555555", anchor="w")
+        self._lamp_status.pack(fill=tk.X)
 
         buttons = tk.Frame(frame, pady=12)
         buttons.pack(fill=tk.X)
@@ -114,6 +169,7 @@ class App:
         self._log.pack(fill=tk.BOTH, expand=True)
 
         root.after(_POLL_MS, self._poll)
+        root.after(0, self._request_lamp_read)
 
     def _on_command(self, command: Command) -> None:
         accepted = self._worker.submit(
@@ -140,13 +196,14 @@ class App:
     def _on_settings_closed(self) -> None:
         self._settings = None
 
-    def _check_candidate(self, connection: ConnectionConfig, devices: DeviceMap) -> bool:
+    def _check_candidate(self, config: AppConfig) -> bool:
         """設定画面で入力中の接続先に、今の接続とは別につないで確認する。"""
+        devices = [*config.devices.values(), *config.lamps.values()]
 
         def task() -> CheckResult:
-            client = self._client_factory(connection, devices.values())
+            client = self._client_factory(config)
             try:
-                return check_connection(client, devices.values())
+                return check_connection(client, devices)
             finally:
                 client.close()
 
@@ -154,15 +211,17 @@ class App:
         self._update_buttons()
         return accepted
 
-    def _save_settings(self, connection: ConnectionConfig, devices: DeviceMap) -> str | None:
+    def _save_settings(self, config: AppConfig) -> str | None:
         """設定を反映してファイルに保存する。失敗したらエラーメッセージを返す。"""
-        config = replace(self._config, connection=connection, devices=devices)
         if not self._worker.submit(lambda: self._apply(config)):
             return "処理中のため保存できませんでした。しばらくしてからもう一度押してください。"
         self._config = config
         self._update_target()
         for command, button in self._command_buttons.items():
-            button.config(text=_button_text(command, devices[command]))
+            button.config(text=_button_text(command, config.devices[command]))
+        for lamp, indicator in self._lamps.items():
+            indicator.set_device(config.lamps[lamp])
+            indicator.set_state(None)
         try:
             save_config(self._config_path, self._config)
         except OSError as e:
@@ -174,8 +233,7 @@ class App:
 
     def _apply(self, config: AppConfig) -> SettingsApplied:
         # ワーカースレッドで実行する（通信中のクライアントを別スレッドから閉じないため）
-        client = self._client_factory(config.connection, config.devices.values())
-        self._sender.reconfigure(client, config.devices)
+        self._sender.reconfigure(self._client_factory(config), config.devices)
         logger.info("設定を反映しました: %s", _describe(config))
         return SettingsApplied(config)
 
@@ -183,6 +241,41 @@ class App:
         conn = self._config.connection
         self._root.title("FX5S Commander" + ("（モック）" if conn.mock else ""))
         self._target.config(text=f"接続先: {conn.label}")
+
+    def _request_lamp_read(self) -> None:
+        lamps = dict(self._config.lamps)
+
+        def task() -> LampReading:
+            # ワーカースレッドで実行する。例外で定期読み出しが止まらないよう、すべて結果にする
+            try:
+                return read_lamps(self._sender.client, lamps)
+            except Exception as e:
+                logger.exception("ランプの読み出し中に予期しないエラーが発生しました")
+                return LampReading(None, f"内部エラー: {e}")
+
+        if not self._worker.submit_background(task):
+            self._root.after(int(self._config.monitor.interval_sec * 1000), self._request_lamp_read)
+
+    def _show_lamps(self, reading: LampReading) -> None:
+        readable = reading.states is not None
+        for lamp, indicator in self._lamps.items():
+            indicator.set_state(reading.states[lamp] if reading.states is not None else None)
+        if readable:
+            self._lamp_status.config(text=f"ランプ: {datetime.now():%H:%M:%S} 更新", fg="#555555")
+        else:
+            self._lamp_status.config(
+                text=f"ランプ: 読み出せません（{reading.error}）", fg="#c62828"
+            )
+        # 毎回ログに出すと埋もれるので、読める・読めないが切り替わったときだけ残す
+        if readable != self._lamps_readable:
+            if readable:
+                self._append_log("ランプの読み出しを開始しました")
+            else:
+                logger.warning("ランプを読み出せません: %s", reading.error)
+                self._append_log(f"ランプを読み出せません: {reading.error}")
+            self._lamps_readable = readable
+        delay_ms = int(self._config.monitor.interval_sec * 1000) if readable else _LAMP_RETRY_MS
+        self._root.after(delay_ms, self._request_lamp_read)
 
     def _poll(self) -> None:
         while True:
@@ -206,6 +299,8 @@ class App:
             self._append_log(result.message)
             if self._settings is not None:
                 self._settings.show_check_result(result)
+        elif isinstance(result, LampReading):
+            self._show_lamps(result)
         elif isinstance(result, SettingsApplied):
             message = f"設定を反映しました（{_describe(result.config)}）"
             self._set_status(message, "black")
@@ -245,5 +340,6 @@ def _button_text(command: Command, device: Device) -> str:
 
 
 def _describe(config: AppConfig) -> str:
-    relays = ", ".join(f"{c.label}={d}" for c, d in config.devices.items())
-    return f"接続先: {config.connection.label} / {relays}"
+    relays = [f"{c.label}={d}" for c, d in config.devices.items()]
+    relays += [f"{lamp.label}={d}" for lamp, d in config.lamps.items()]
+    return f"接続先: {config.connection.label} / {', '.join(relays)}"

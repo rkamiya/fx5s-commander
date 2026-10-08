@@ -87,3 +87,32 @@ def test_shutdown_finishes_accepted_tasks_and_rejects_new_ones():
     assert exited.is_set()
     assert [results.get_nowait() for _ in range(2)] == ["on", "stop"]
     assert not worker.submit(lambda: "late", priority=True)
+
+
+def test_background_task_does_not_block_commands():
+    worker, results, _ = make_worker()
+    started, release = threading.Event(), threading.Event()
+
+    assert worker.submit_background(blocking_task("lamp", started, release))
+    assert started.wait(TIMEOUT)
+    assert not worker.busy
+    assert not worker.submit_background(lambda: "lamp2")  # 待ちは 1 件まで
+    assert worker.submit(lambda: "on")  # 読み出し中でも指令は受け付ける
+
+    release.set()
+    assert [results.get(timeout=TIMEOUT) for _ in range(2)] == ["lamp", "on"]
+    assert worker.submit_background(lambda: "lamp3")
+    assert results.get(timeout=TIMEOUT) == "lamp3"
+    worker.shutdown(TIMEOUT)
+
+
+def test_background_task_runs_after_commands():
+    results = queue.Queue()
+    worker = TaskWorker(on_done=results.put)
+    assert worker.submit_background(lambda: "lamp")
+    assert worker.submit(lambda: "on")
+    assert worker.submit(lambda: "stop", priority=True)
+    worker.start()
+
+    assert [results.get(timeout=TIMEOUT) for _ in range(3)] == ["stop", "on", "lamp"]
+    worker.shutdown(TIMEOUT)

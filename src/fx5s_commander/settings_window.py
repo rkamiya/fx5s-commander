@@ -1,4 +1,4 @@
-"""設定ウィンドウ。[接続設定] タブで接続先、[リレー] タブで各指令の内部リレーを設定する。
+"""設定ウィンドウ。[接続設定] タブで接続先、[リレー] タブで指令とランプの内部リレーを設定する。
 
 入力の検証と画面表示だけを担当する。接続確認と保存の実処理は App から渡されるコールバックが行う。
 """
@@ -15,15 +15,14 @@ from fx5s_commander.config import (
     AppConfig,
     ConfigError,
     ConnectionConfig,
-    parse_devices,
+    parse_relays,
     validate_connection,
 )
-from fx5s_commander.devices import M_DEVICE_MAX, Device
+from fx5s_commander.devices import M_DEVICE_MAX
+from fx5s_commander.monitor import Lamp
 
 _OK_COLOR = "#2e7d32"
 _ERROR_COLOR = "#c62828"
-
-DeviceMap = dict[Command, Device]
 
 
 class SettingsWindow:
@@ -32,12 +31,15 @@ class SettingsWindow:
         parent: tk.Tk,
         *,
         config: AppConfig,
-        on_check: Callable[[ConnectionConfig, DeviceMap], bool],
-        on_save: Callable[[ConnectionConfig, DeviceMap], str | None],
+        on_check: Callable[[AppConfig], bool],
+        on_save: Callable[[AppConfig], str | None],
         on_closed: Callable[[], None],
     ) -> None:
-        """on_check は確認を始めたら True、on_save は失敗時にエラーメッセージを返す。"""
-        self._base = config.connection
+        """on_check と on_save は入力内容を反映した設定を受け取る。
+
+        on_check は確認を始めたら True、on_save は失敗時にエラーメッセージを返す。
+        """
+        self._base = config
         self._on_check = on_check
         self._on_save = on_save
         self._on_closed = on_closed
@@ -56,7 +58,7 @@ class SettingsWindow:
         self._notebook = ttk.Notebook(frame)
         self._notebook.pack(fill=tk.BOTH, expand=True)
         self._connection_tab = self._build_connection_tab(config.connection)
-        self._relay_tab = self._build_relay_tab(config.devices)
+        self._relay_tab = self._build_relay_tab(config)
         self._notebook.add(self._connection_tab, text="接続設定")
         self._notebook.add(self._relay_tab, text="リレー")
 
@@ -96,25 +98,41 @@ class SettingsWindow:
         self._check_button.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 0))
         return tab
 
-    def _build_relay_tab(self, devices: DeviceMap) -> tk.Frame:
+    def _build_relay_tab(self, config: AppConfig) -> tk.Frame:
         tab = tk.Frame(self._notebook, padx=12, pady=12)
-        self._relays = {command: tk.StringVar(value=str(devices[command])) for command in Command}
-        for row, command in enumerate(Command):
-            tk.Label(tab, text=command.label).grid(row=row, column=0, sticky="w", pady=4)
-            tk.Entry(tab, textvariable=self._relays[command], width=10).grid(
-                row=row, column=1, sticky="w", pady=4
-            )
+
+        commands = tk.LabelFrame(tab, text="指令（書き込み）", padx=8, pady=4)
+        commands.pack(fill=tk.X)
+        self._command_relays = {
+            command: self._relay_row(commands, row, command.label, str(config.devices[command]))
+            for row, command in enumerate(Command)
+        }
+
+        lamps = tk.LabelFrame(tab, text="ランプ（読み出し）", padx=8, pady=4)
+        lamps.pack(fill=tk.X, pady=(8, 0))
+        self._lamp_relays = {
+            lamp: self._relay_row(lamps, row, lamp.label, str(config.lamps[lamp]))
+            for row, lamp in enumerate(Lamp)
+        }
+
         tk.Label(
             tab,
             text=(
                 f"M0〜M{M_DEVICE_MAX} の内部リレーを指定します。"
-                "ラダー側の割り当て（受付後に RST する処理を含む）と合わせてください。"
+                "ラダー側の割り当て（指令は受付後に RST する処理を含む）と合わせてください。"
             ),
             fg="#555555",
             wraplength=280,
             justify=tk.LEFT,
-        ).grid(row=len(Command), column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ).pack(fill=tk.X, pady=(8, 0))
         return tab
+
+    @staticmethod
+    def _relay_row(parent: tk.Widget, row: int, label: str, value: str) -> tk.StringVar:
+        var = tk.StringVar(value=value)
+        tk.Label(parent, text=label, width=8, anchor="w").grid(row=row, column=0, pady=2)
+        tk.Entry(parent, textvariable=var, width=10).grid(row=row, column=1, sticky="w", pady=2)
+        return var
 
     def set_busy(self, busy: bool) -> None:
         """PLC と通信中は接続確認と保存を押せないようにする。"""
@@ -134,44 +152,46 @@ class SettingsWindow:
         self._on_closed()
 
     def _check(self) -> None:
-        values = self._read_input()
-        if values is None:
+        config = self._read_input()
+        if config is None:
             return
-        connection, devices = values
-        if self._on_check(connection, devices):
+        if self._on_check(config):
             self._checking = True
-            self._show(f"{connection.label} に接続しています…", "black")
+            self._show(f"{config.connection.label} に接続しています…", "black")
         else:
             self._show("処理中です。しばらくしてからもう一度押してください。", _ERROR_COLOR)
 
     def _save(self) -> None:
-        values = self._read_input()
-        if values is None:
+        config = self._read_input()
+        if config is None:
             return
-        error = self._on_save(*values)
+        error = self._on_save(config)
         if error is not None:
             self._show(error, _ERROR_COLOR)
             return
         self.close()
 
-    def _read_input(self) -> tuple[ConnectionConfig, DeviceMap] | None:
+    def _read_input(self) -> AppConfig | None:
         """入力を検証する。エラーがあればそのタブを開いてメッセージを出し、None を返す。"""
         try:
             port = int(self._port.get().strip())
         except ValueError:
             return self._fail(self._connection_tab, "ポート番号は数字で入力してください。")
         connection = replace(
-            self._base, host=self._host.get().strip(), port=port, mock=self._mock.get()
+            self._base.connection, host=self._host.get().strip(), port=port, mock=self._mock.get()
         )
         try:
             validate_connection(connection)
         except ConfigError as e:
             return self._fail(self._connection_tab, str(e))
         try:
-            devices = parse_devices({c: v.get() for c, v in self._relays.items()})
+            devices, lamps = parse_relays(
+                {c: v.get() for c, v in self._command_relays.items()},
+                {lamp: v.get() for lamp, v in self._lamp_relays.items()},
+            )
         except ConfigError as e:
             return self._fail(self._relay_tab, str(e))
-        return connection, devices
+        return replace(self._base, connection=connection, devices=devices, lamps=lamps)
 
     def _fail(self, tab: tk.Frame, message: str) -> None:
         self._notebook.select(tab)
