@@ -108,16 +108,19 @@ def test_check_connection_failure(plc):
     assert not check_connection(plc, DEFAULT_DEVICES.values()).ok
 
 
-def test_set_client_closes_old_connection(sender, plc, clock):
+def test_reconfigure_switches_client_and_devices(sender, plc, clock):
     sender.send(Command.ON)
     assert plc.is_connected
     new_plc = MockPlcClient(ack_delay_sec=0.2, clock=clock)
+    new_devices = {**DEFAULT_DEVICES, Command.OFF: Device("M", 500)}
 
-    sender.set_client(new_plc)
+    sender.reconfigure(new_plc, new_devices)
 
     assert not plc.is_connected
-    assert sender.send(Command.OFF).outcome is Outcome.ACCEPTED
-    assert new_plc.writes == [(Device("M", 101), True)]
+    result = sender.send(Command.OFF)
+    assert result.outcome is Outcome.ACCEPTED
+    assert result.device == Device("M", 500)
+    assert new_plc.writes == [(Device("M", 500), True)]
 
 
 def test_guard_rejects_unlisted_device(plc):

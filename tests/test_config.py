@@ -9,6 +9,7 @@ from fx5s_commander.config import (
     dump_config,
     load_config,
     parse_config,
+    parse_devices,
     save_config,
 )
 from fx5s_commander.devices import Device
@@ -96,3 +97,26 @@ def test_dump_default_is_loadable():
     import tomllib
 
     assert parse_config(tomllib.loads(dump_config(default_config()))) == default_config()
+
+
+def test_parse_devices():
+    devices = parse_devices({Command.ON: "m10", Command.OFF: "M11", Command.STOP: " M12 "})
+    assert devices == {
+        Command.ON: Device("M", 10),
+        Command.OFF: Device("M", 11),
+        Command.STOP: Device("M", 12),
+    }
+
+
+@pytest.mark.parametrize(
+    ("texts", "expected"),
+    [
+        ({Command.ON: "Y0", Command.OFF: "M11", Command.STOP: "M12"}, "ON"),
+        ({Command.ON: "M10", Command.OFF: "", Command.STOP: "M12"}, "OFF"),
+        ({Command.ON: "M10", Command.OFF: "M11", Command.STOP: "M99999"}, "停止要求"),
+        ({Command.ON: "M10", Command.OFF: "M10", Command.STOP: "M12"}, "複数"),
+    ],
+)
+def test_parse_devices_invalid(texts, expected):
+    with pytest.raises(ConfigError, match=expected):
+        parse_devices(texts)

@@ -53,11 +53,8 @@ def main(argv: list[str] | None = None) -> int:
         _show_startup_error(str(e))
         return 1
 
-    def client_factory(connection: ConnectionConfig) -> PlcClient:
-        return build_client(connection, config.devices.values())
-
     sender = CommandSender(
-        client_factory(config.connection),
+        build_client(config.connection, config.devices.values()),
         config.devices,
         ack_timeout_sec=config.handshake.ack_timeout_sec,
         poll_interval_sec=config.handshake.poll_interval_sec,
@@ -73,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
         config=config,
         config_path=args.config or DEFAULT_CONFIG_PATH,
         sender=sender,
-        client_factory=client_factory,
+        client_factory=build_client,
         worker=worker,
         results=results,
     )

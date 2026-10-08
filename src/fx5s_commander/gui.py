@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 import queue
 import tkinter as tk
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -25,8 +25,9 @@ from fx5s_commander.commands import (
     check_connection,
 )
 from fx5s_commander.config import AppConfig, ConnectionConfig, save_config
+from fx5s_commander.devices import Device
 from fx5s_commander.plc.client import PlcClient
-from fx5s_commander.settings_window import SettingsWindow
+from fx5s_commander.settings_window import DeviceMap, SettingsWindow
 from fx5s_commander.worker import TaskWorker
 
 logger = logging.getLogger(__name__)
@@ -49,8 +50,8 @@ _OUTCOME_COLORS = {
 
 
 @dataclass(frozen=True)
-class ConnectionChanged:
-    connection: ConnectionConfig
+class SettingsApplied:
+    config: AppConfig
 
 
 class App:
@@ -61,7 +62,7 @@ class App:
         config: AppConfig,
         config_path: Path,
         sender: CommandSender,
-        client_factory: Callable[[ConnectionConfig], PlcClient],
+        client_factory: Callable[[ConnectionConfig, Iterable[Device]], PlcClient],
         worker: TaskWorker,
         results: queue.Queue[Any],
     ) -> None:
@@ -93,7 +94,7 @@ class App:
         for column, command in enumerate(Command):
             button = tk.Button(
                 buttons,
-                text=f"{command.label}\n({sender.device_for(command)})",
+                text=_button_text(command, config.devices[command]),
                 font=("", 14, "bold"),
                 fg="white",
                 bg=_BUTTON_COLORS[command],
@@ -140,9 +141,9 @@ class App:
             return
         self._settings = SettingsWindow(
             self._root,
-            connection=self._config.connection,
+            config=self._config,
             on_check=self._check_candidate,
-            on_save=self._save_connection,
+            on_save=self._save_settings,
             on_closed=self._on_settings_closed,
         )
         self._update_buttons()
@@ -150,14 +151,13 @@ class App:
     def _on_settings_closed(self) -> None:
         self._settings = None
 
-    def _check_candidate(self, connection: ConnectionConfig) -> bool:
+    def _check_candidate(self, connection: ConnectionConfig, devices: DeviceMap) -> bool:
         """設定画面で入力中の接続先に、今の接続とは別につないで確認する。"""
-        devices = list(self._config.devices.values())
 
         def task() -> CheckResult:
-            client = self._client_factory(connection)
+            client = self._client_factory(connection, devices.values())
             try:
-                return check_connection(client, devices)
+                return check_connection(client, devices.values())
             finally:
                 client.close()
 
@@ -165,26 +165,30 @@ class App:
         self._update_buttons()
         return accepted
 
-    def _save_connection(self, connection: ConnectionConfig) -> str | None:
-        """接続先を切り替えて設定ファイルに保存する。失敗したらエラーメッセージを返す。"""
-        if not self._worker.submit(lambda: self._switch_client(connection)):
+    def _save_settings(self, connection: ConnectionConfig, devices: DeviceMap) -> str | None:
+        """設定を反映してファイルに保存する。失敗したらエラーメッセージを返す。"""
+        config = replace(self._config, connection=connection, devices=devices)
+        if not self._worker.submit(lambda: self._apply(config)):
             return "処理中のため保存できませんでした。しばらくしてからもう一度押してください。"
-        self._config = replace(self._config, connection=connection)
+        self._config = config
         self._update_target()
+        for command, button in self._command_buttons.items():
+            button.config(text=_button_text(command, devices[command]))
         try:
             save_config(self._config_path, self._config)
         except OSError as e:
             logger.exception("設定の保存に失敗しました")
-            return f"接続先は切り替えましたが、{self._config_path} に保存できませんでした: {e}"
+            return f"設定は反映しましたが、{self._config_path} に保存できませんでした: {e}"
         logger.info("設定を保存しました: %s", self._config_path)
         self._append_log(f"設定を {self._config_path} に保存しました")
         return None
 
-    def _switch_client(self, connection: ConnectionConfig) -> ConnectionChanged:
+    def _apply(self, config: AppConfig) -> SettingsApplied:
         # ワーカースレッドで実行する（通信中のクライアントを別スレッドから閉じないため）
-        self._sender.set_client(self._client_factory(connection))
-        logger.info("接続先を %s に変更しました", connection.label)
-        return ConnectionChanged(connection)
+        client = self._client_factory(config.connection, config.devices.values())
+        self._sender.reconfigure(client, config.devices)
+        logger.info("設定を反映しました: %s", _describe(config))
+        return SettingsApplied(config)
 
     def _update_target(self) -> None:
         conn = self._config.connection
@@ -213,8 +217,8 @@ class App:
             self._append_log(result.message)
             if self._settings is not None:
                 self._settings.show_check_result(result)
-        elif isinstance(result, ConnectionChanged):
-            message = f"接続先を {result.connection.label} に変更しました"
+        elif isinstance(result, SettingsApplied):
+            message = f"設定を反映しました（{_describe(result.config)}）"
             self._set_status(message, "black")
             self._append_log(message)
         else:
@@ -245,3 +249,12 @@ class App:
         self._root.update_idletasks()
         self._worker.shutdown(timeout=_SHUTDOWN_TIMEOUT_SEC)
         self._root.destroy()
+
+
+def _button_text(command: Command, device: Device) -> str:
+    return f"{command.label}\n({device})"
+
+
+def _describe(config: AppConfig) -> str:
+    relays = ", ".join(f"{c.label}={d}" for c, d in config.devices.items())
+    return f"接続先: {config.connection.label} / {relays}"

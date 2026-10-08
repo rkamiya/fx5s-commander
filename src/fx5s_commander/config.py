@@ -6,6 +6,7 @@ import ipaddress
 import json
 import os
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -84,16 +85,14 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     validate_connection(connection)
 
     dev = _section(data, "devices")
-    devices: dict[Command, Device] = {}
-    for command in Command:
-        key = f"devices.{command.value}"
-        text = _get(dev, key, str, str(defaults.devices[command]))
-        try:
-            devices[command] = parse_device(text)
-        except ValueError as e:
-            raise ConfigError(f"{key}: {e}") from e
-    if len(set(devices.values())) != len(devices):
-        raise ConfigError("devices に同じデバイスが複数指定されています")
+    texts = {
+        command: _get(dev, f"devices.{command.value}", str, str(defaults.devices[command]))
+        for command in Command
+    }
+    try:
+        devices = parse_devices(texts)
+    except ConfigError as e:
+        raise ConfigError(f"[devices] {e}") from e
 
     hs = _section(data, "handshake")
     handshake = HandshakeConfig(
@@ -108,6 +107,19 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
         raise ConfigError("handshake の時間は正の値で指定してください")
 
     return AppConfig(connection, devices, handshake)
+
+
+def parse_devices(texts: Mapping[Command, str]) -> dict[Command, Device]:
+    """各指令のデバイス（'M100' など）を検証して変換する。M 以外や重複は ConfigError。"""
+    devices: dict[Command, Device] = {}
+    for command in Command:
+        try:
+            devices[command] = parse_device(texts[command])
+        except ValueError as e:
+            raise ConfigError(f"{command.label}: {e}") from e
+    if len(set(devices.values())) != len(devices):
+        raise ConfigError("同じリレーが複数の指令に割り当てられています")
+    return devices
 
 
 def validate_connection(connection: ConnectionConfig) -> None:

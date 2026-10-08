@@ -76,9 +76,6 @@ class CommandSender:
         self._clock = clock
         self._sleep = sleep
 
-    def device_for(self, command: Command) -> Device:
-        return self._devices[command]
-
     def send(self, command: Command) -> CommandResult:
         device = self._devices[command]
         start = self._clock()
@@ -128,10 +125,11 @@ class CommandSender:
             f"{command.label} 指令を PLC が受け付けました（設備の動作は別途確認してください）。",
         )
 
-    def set_client(self, client: PlcClient) -> None:
-        """接続先を切り替える。今の接続は閉じる。"""
+    def reconfigure(self, client: PlcClient, devices: Mapping[Command, Device]) -> None:
+        """接続先とリレーの割り当てを切り替える。今の接続は閉じる。"""
         self._client.close()
         self._client = client
+        self._devices = dict(devices)
 
     def close(self) -> None:
         self._client.close()
