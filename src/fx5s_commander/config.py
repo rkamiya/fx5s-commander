@@ -26,6 +26,13 @@ class ConnectionConfig:
     port: int = 5000
     plc_type: str = "L"
     timeout_sec: float = 2.0
+    mock: bool = False
+    """True なら実機に接続せず、モック PLC を使う。"""
+
+    @property
+    def label(self) -> str:
+        """画面やログに出す接続先の表記。"""
+        return "モック PLC" if self.mock else f"{self.host}:{self.port}"
 
 
 @dataclass(frozen=True)
@@ -72,6 +79,7 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
         port=_get(conn, "connection.port", int, defaults.connection.port),
         plc_type=_get(conn, "connection.plc_type", str, defaults.connection.plc_type),
         timeout_sec=_get(conn, "connection.timeout_sec", float, defaults.connection.timeout_sec),
+        mock=_get(conn, "connection.mock", bool, defaults.connection.mock),
     )
     validate_connection(connection)
 
@@ -135,6 +143,7 @@ def dump_config(config: AppConfig) -> str:
         f"port = {conn.port}",
         f"plc_type = {json.dumps(conn.plc_type)}",
         f"timeout_sec = {conn.timeout_sec!r}",
+        f"mock = {'true' if conn.mock else 'false'}",
         "",
         "[devices]",
         *(f'{command.value} = "{device}"' for command, device in config.devices.items()),
@@ -158,6 +167,6 @@ def _get(section: dict[str, Any], key: str, type_: type, default: Any) -> Any:
     # TOML の整数は float の項目にも書けるようにする（bool は int の派生なので除外）
     if type_ is float and isinstance(value, int) and not isinstance(value, bool):
         value = float(value)
-    if not isinstance(value, type_) or isinstance(value, bool):
+    if not isinstance(value, type_) or (type_ is not bool and isinstance(value, bool)):
         raise ConfigError(f"{key} の型が正しくありません（{type_.__name__} を指定してください）")
     return value

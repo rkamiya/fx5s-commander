@@ -27,7 +27,7 @@ def test_example_file_matches_defaults():
 def test_overrides():
     config = parse_config(
         {
-            "connection": {"host": "10.0.0.5", "port": 6000, "timeout_sec": 3},
+            "connection": {"host": "10.0.0.5", "port": 6000, "timeout_sec": 3, "mock": True},
             "devices": {"on": "M200", "off": "M201", "stop": "M202"},
             "handshake": {"ack_timeout_sec": 2},
         }
@@ -35,6 +35,7 @@ def test_overrides():
     assert config.connection.host == "10.0.0.5"
     assert config.connection.port == 6000
     assert config.connection.timeout_sec == 3.0
+    assert config.connection.mock is True
     assert config.devices[Command.STOP] == Device("M", 202)
     assert config.handshake.ack_timeout_sec == 2.0
 
@@ -48,6 +49,8 @@ def test_overrides():
         {"connection": {"host": "plc.local"}},
         {"connection": {"host": "192.168.1.256"}},
         {"connection": {"plc_type": "FX5"}},
+        {"connection": {"mock": "yes"}},
+        {"connection": {"mock": 1}},
         {"connection": {"timeout_sec": 0}},
         {"devices": {"on": "Y0"}},
         {"devices": {"on": "M101"}},  # off と重複
@@ -76,7 +79,7 @@ def test_load_broken_file(tmp_path):
 def test_save_and_load_round_trip(tmp_path):
     config = parse_config(
         {
-            "connection": {"host": "10.0.0.5", "port": 6000, "timeout_sec": 1.5},
+            "connection": {"host": "10.0.0.5", "port": 6000, "timeout_sec": 1.5, "mock": True},
             "devices": {"on": "M200", "off": "M201", "stop": "M202"},
             "handshake": {"ack_timeout_sec": 0.8, "poll_interval_sec": 0.02},
         }

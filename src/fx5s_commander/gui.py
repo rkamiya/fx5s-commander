@@ -64,7 +64,6 @@ class App:
         client_factory: Callable[[ConnectionConfig], PlcClient],
         worker: TaskWorker,
         results: queue.Queue[Any],
-        mock: bool,
     ) -> None:
         self._root = root
         self._config = config
@@ -73,11 +72,8 @@ class App:
         self._client_factory = client_factory
         self._worker = worker
         self._results = results
-        self._mock = mock
         self._settings: SettingsWindow | None = None
 
-        title = "FX5S Commander" + ("（モック）" if mock else "")
-        root.title(title)
         root.minsize(420, 420)
         root.protocol("WM_DELETE_WINDOW", self._on_close)
 
@@ -187,13 +183,13 @@ class App:
     def _switch_client(self, connection: ConnectionConfig) -> ConnectionChanged:
         # ワーカースレッドで実行する（通信中のクライアントを別スレッドから閉じないため）
         self._sender.set_client(self._client_factory(connection))
-        logger.info("接続先を %s:%s に変更しました", connection.host, connection.port)
+        logger.info("接続先を %s に変更しました", connection.label)
         return ConnectionChanged(connection)
 
     def _update_target(self) -> None:
         conn = self._config.connection
-        suffix = "（モック）" if self._mock else ""
-        self._target.config(text=f"接続先: {conn.host}:{conn.port}{suffix}")
+        self._root.title("FX5S Commander" + ("（モック）" if conn.mock else ""))
+        self._target.config(text=f"接続先: {conn.label}")
 
     def _poll(self) -> None:
         while True:
@@ -218,9 +214,9 @@ class App:
             if self._settings is not None:
                 self._settings.show_check_result(result)
         elif isinstance(result, ConnectionChanged):
-            conn = result.connection
-            self._set_status(f"接続先を {conn.host}:{conn.port} に変更しました", "black")
-            self._append_log(f"接続先を {conn.host}:{conn.port} に変更しました")
+            message = f"接続先を {result.connection.label} に変更しました"
+            self._set_status(message, "black")
+            self._append_log(message)
         else:
             self._set_status(f"内部エラー: {result}", "#c62828")
             self._append_log(f"内部エラー: {result!r}")

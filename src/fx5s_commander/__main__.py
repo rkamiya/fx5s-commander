@@ -41,12 +41,6 @@ def main(argv: list[str] | None = None) -> int:
         type=Path,
         help=f"設定ファイル（省略時は {DEFAULT_CONFIG_PATH} があれば使い、なければ既定値）",
     )
-    parser.add_argument("--mock", action="store_true", help="実機の代わりにモック PLC を使う")
-    parser.add_argument(
-        "--mock-no-ack",
-        action="store_true",
-        help="モック PLC が指令を受け付けない（ラダー未対応の PLC を想定）",
-    )
     parser.add_argument("--log-file", type=Path, default=DEFAULT_LOG_PATH, help="ログの出力先")
     args = parser.parse_args(argv)
 
@@ -59,12 +53,8 @@ def main(argv: list[str] | None = None) -> int:
         _show_startup_error(str(e))
         return 1
 
-    mock = args.mock or args.mock_no_ack
-
     def client_factory(connection: ConnectionConfig) -> PlcClient:
-        return build_client(
-            connection, config.devices.values(), mock=mock, mock_ack=not args.mock_no_ack
-        )
+        return build_client(connection, config.devices.values())
 
     sender = CommandSender(
         client_factory(config.connection),
@@ -76,7 +66,7 @@ def main(argv: list[str] | None = None) -> int:
     worker = TaskWorker(on_done=results.put, on_exit=sender.close)
     worker.start()
 
-    logger.info("起動しました（%s）", "モック" if mock else "実機")
+    logger.info("起動しました（%s）", "モック" if config.connection.mock else "実機")
     root = tk.Tk()
     App(
         root,
@@ -86,23 +76,16 @@ def main(argv: list[str] | None = None) -> int:
         client_factory=client_factory,
         worker=worker,
         results=results,
-        mock=mock,
     )
     root.mainloop()
     logger.info("終了しました")
     return 0
 
 
-def build_client(
-    connection: ConnectionConfig,
-    allowed_writes: Iterable[Device],
-    *,
-    mock: bool,
-    mock_ack: bool = True,
-) -> PlcClient:
+def build_client(connection: ConnectionConfig, allowed_writes: Iterable[Device]) -> PlcClient:
     inner: PlcClient
-    if mock:
-        inner = MockPlcClient(ack_delay_sec=0.2 if mock_ack else None)
+    if connection.mock:
+        inner = MockPlcClient()
     else:
         inner = SlmpPlcClient(
             connection.host,

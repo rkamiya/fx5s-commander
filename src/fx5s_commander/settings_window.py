@@ -1,4 +1,4 @@
-"""接続先（IP アドレス・ポート番号）を設定するウィンドウ。
+"""接続先（IP アドレス・ポート番号、モックを使うかどうか）を設定するウィンドウ。
 
 入力の検証と画面表示だけを担当する。接続確認と保存の実処理は App から渡されるコールバックが行う。
 """
@@ -43,28 +43,37 @@ class SettingsWindow:
         frame = tk.Frame(window, padx=16, pady=12)
         frame.pack(fill=tk.BOTH, expand=True)
 
+        self._mock = tk.BooleanVar(value=connection.mock)
         self._host = tk.StringVar(value=connection.host)
         self._port = tk.StringVar(value=str(connection.port))
-        tk.Label(frame, text="IP アドレス").grid(row=0, column=0, sticky="w", pady=4)
-        host_entry = tk.Entry(frame, textvariable=self._host, width=20)
-        host_entry.grid(row=0, column=1, sticky="ew", pady=4)
-        tk.Label(frame, text="ポート番号").grid(row=1, column=0, sticky="w", pady=4)
-        tk.Entry(frame, textvariable=self._port, width=8).grid(row=1, column=1, sticky="w", pady=4)
+        tk.Checkbutton(
+            frame,
+            text="モック PLC を使う（実機に接続しない）",
+            variable=self._mock,
+            command=self._update_entries,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        tk.Label(frame, text="IP アドレス").grid(row=1, column=0, sticky="w", pady=4)
+        self._host_entry = tk.Entry(frame, textvariable=self._host, width=20)
+        self._host_entry.grid(row=1, column=1, sticky="ew", pady=4)
+        tk.Label(frame, text="ポート番号").grid(row=2, column=0, sticky="w", pady=4)
+        self._port_entry = tk.Entry(frame, textvariable=self._port, width=8)
+        self._port_entry.grid(row=2, column=1, sticky="w", pady=4)
         frame.columnconfigure(1, weight=1)
 
         self._check_button = tk.Button(frame, text="接続確認", command=self._check)
-        self._check_button.grid(row=2, column=0, columnspan=2, sticky="w", pady=(8, 4))
+        self._check_button.grid(row=3, column=0, columnspan=2, sticky="w", pady=(8, 4))
         self._message = tk.Label(frame, text="", wraplength=300, justify=tk.LEFT, anchor="w")
-        self._message.grid(row=3, column=0, columnspan=2, sticky="ew")
+        self._message.grid(row=4, column=0, columnspan=2, sticky="ew")
 
         actions = tk.Frame(frame, pady=8)
-        actions.grid(row=4, column=0, columnspan=2, sticky="e")
+        actions.grid(row=5, column=0, columnspan=2, sticky="e")
         self._save_button = tk.Button(actions, text="保存", width=8, command=self._save)
         self._save_button.pack(side=tk.LEFT, padx=4)
         tk.Button(actions, text="キャンセル", width=8, command=self.close).pack(side=tk.LEFT)
 
+        self._update_entries()
         window.grab_set()
-        host_entry.focus_set()
+        window.focus_set()
 
     def set_busy(self, busy: bool) -> None:
         """PLC と通信中は接続確認と保存を押せないようにする。"""
@@ -89,7 +98,7 @@ class SettingsWindow:
             return
         if self._on_check(connection):
             self._checking = True
-            self._show(f"{connection.host}:{connection.port} に接続しています…", "black")
+            self._show(f"{connection.label} に接続しています…", "black")
         else:
             self._show("処理中です。しばらくしてからもう一度押してください。", _ERROR_COLOR)
 
@@ -109,13 +118,21 @@ class SettingsWindow:
         except ValueError:
             self._show("ポート番号は数字で入力してください。", _ERROR_COLOR)
             return None
-        connection = replace(self._base, host=self._host.get().strip(), port=port)
+        connection = replace(
+            self._base, host=self._host.get().strip(), port=port, mock=self._mock.get()
+        )
         try:
             validate_connection(connection)
         except ConfigError as e:
             self._show(str(e), _ERROR_COLOR)
             return None
         return connection
+
+    def _update_entries(self) -> None:
+        # モックのときは IP アドレスとポート番号を使わないので入力できないようにする（値は残す）
+        state = tk.DISABLED if self._mock.get() else tk.NORMAL
+        self._host_entry.config(state=state)
+        self._port_entry.config(state=state)
 
     def _show(self, text: str, color: str) -> None:
         self._message.config(text=text, fg=color)
