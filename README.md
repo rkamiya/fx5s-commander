@@ -41,7 +41,6 @@ fx5s-commander
 
 **[保存]** を押すと設定がその場で反映され、`config.toml` に保存されます。
 
-
 `config.toml` がない場合は既定値（192.168.1.20:5000）で起動します。PLC 種別やタイムアウトなど、画面にない項目は `config.toml` を直接編集してください（書式は `config.example.toml`）。画面から保存すると、`config.toml` 内のコメントは消えます。
 
 ログは `logs/fx5s-commander.log` に出力されます。
