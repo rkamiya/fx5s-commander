@@ -1,0 +1,26 @@
+# FX5S Commander 設定ファイルの例
+# このファイルを config.toml という名前でコピーして編集してください。
+# config.toml がない場合は、ここに書かれている値と同じ既定値で起動します。
+
+[connection]
+# PLC の IP アドレスとポート番号（GX Works3 の Ethernet 設定に合わせる）
+host = "192.168.1.20"
+port = 5000
+# pymcprotocol に渡す PLC 種別。FX5S での正しい値は実機で要検証。
+# FX5 は Q/L 互換のデバイス指定を使うため、まずは "L" で試す。
+plc_type = "L"
+# 通信タイムアウト（秒）
+timeout_sec = 2.0
+
+[devices]
+# 各ボタンが書き込む内部リレー。M デバイスのみ指定可能。
+on = "M100"
+off = "M101"
+stop = "M102"
+
+[handshake]
+# PC が M を ON にした後、ラダーが OFF に戻すまで待つ時間（秒）。
+# この時間内に OFF に戻らなければ、PC 側で OFF に戻して指令を取り消す。
+ack_timeout_sec = 1.0
+# PLC の状態を読み直す間隔（秒）
+poll_interval_sec = 0.05
