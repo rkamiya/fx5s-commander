@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import ipaddress
+import json
+import os
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -70,14 +73,7 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
         plc_type=_get(conn, "connection.plc_type", str, defaults.connection.plc_type),
         timeout_sec=_get(conn, "connection.timeout_sec", float, defaults.connection.timeout_sec),
     )
-    if not connection.host.strip():
-        raise ConfigError("connection.host が空です")
-    if not 1 <= connection.port <= 65535:
-        raise ConfigError(f"connection.port は 1〜65535 で指定してください: {connection.port}")
-    if connection.plc_type not in PLC_TYPES:
-        raise ConfigError(f"connection.plc_type は {', '.join(PLC_TYPES)} のいずれかです")
-    if connection.timeout_sec <= 0:
-        raise ConfigError("connection.timeout_sec は正の値で指定してください")
+    validate_connection(connection)
 
     dev = _section(data, "devices")
     devices: dict[Command, Device] = {}
@@ -104,6 +100,50 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
         raise ConfigError("handshake の時間は正の値で指定してください")
 
     return AppConfig(connection, devices, handshake)
+
+
+def validate_connection(connection: ConnectionConfig) -> None:
+    try:
+        # pymcprotocol は IPv4 のみ対応
+        ipaddress.IPv4Address(connection.host)
+    except ValueError as e:
+        raise ConfigError(f"IP アドレスの形式が正しくありません: {connection.host!r}") from e
+    if not 1 <= connection.port <= 65535:
+        raise ConfigError(f"ポート番号は 1〜65535 で指定してください: {connection.port}")
+    if connection.plc_type not in PLC_TYPES:
+        raise ConfigError(f"connection.plc_type は {', '.join(PLC_TYPES)} のいずれかです")
+    if connection.timeout_sec <= 0:
+        raise ConfigError("connection.timeout_sec は正の値で指定してください")
+
+
+def save_config(path: Path, config: AppConfig) -> None:
+    """設定をファイルに保存する。ファイル内のコメントは残らない。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(dump_config(config), encoding="utf-8")
+    os.replace(tmp, path)
+
+
+def dump_config(config: AppConfig) -> str:
+    conn, hs = config.connection, config.handshake
+    lines = [
+        "# FX5S Commander の設定（アプリの設定画面から保存したもの）",
+        "# 各項目の説明は config.example.toml を参照",
+        "",
+        "[connection]",
+        f"host = {json.dumps(conn.host)}",
+        f"port = {conn.port}",
+        f"plc_type = {json.dumps(conn.plc_type)}",
+        f"timeout_sec = {conn.timeout_sec!r}",
+        "",
+        "[devices]",
+        *(f'{command.value} = "{device}"' for command, device in config.devices.items()),
+        "",
+        "[handshake]",
+        f"ack_timeout_sec = {hs.ack_timeout_sec!r}",
+        f"poll_interval_sec = {hs.poll_interval_sec!r}",
+    ]
+    return "\n".join(lines) + "\n"
 
 
 def _section(data: dict[str, Any], name: str) -> dict[str, Any]:

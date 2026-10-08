@@ -1,6 +1,6 @@
 import pytest
 
-from fx5s_commander.commands import Command, CommandSender, Outcome
+from fx5s_commander.commands import Command, CommandSender, Outcome, check_connection
 from fx5s_commander.config import DEFAULT_DEVICES
 from fx5s_commander.devices import Device
 from fx5s_commander.plc.client import DeviceNotAllowedError, GuardedPlcClient
@@ -95,17 +95,29 @@ def test_error_during_handshake_warns_command_may_have_run(sender, plc, clock):
     assert not plc.is_connected
 
 
-def test_check_connection_reads_without_writing(sender, plc):
-    result = sender.check_connection()
+def test_check_connection_reads_without_writing(plc):
+    result = check_connection(plc, DEFAULT_DEVICES.values())
 
     assert result.ok
     assert "M100=OFF" in result.message
     assert plc.writes == []
 
 
-def test_check_connection_failure(sender, plc):
+def test_check_connection_failure(plc):
     plc.fail_connect = True
-    assert not sender.check_connection().ok
+    assert not check_connection(plc, DEFAULT_DEVICES.values()).ok
+
+
+def test_set_client_closes_old_connection(sender, plc, clock):
+    sender.send(Command.ON)
+    assert plc.is_connected
+    new_plc = MockPlcClient(ack_delay_sec=0.2, clock=clock)
+
+    sender.set_client(new_plc)
+
+    assert not plc.is_connected
+    assert sender.send(Command.OFF).outcome is Outcome.ACCEPTED
+    assert new_plc.writes == [(Device("M", 101), True)]
 
 
 def test_guard_rejects_unlisted_device(plc):

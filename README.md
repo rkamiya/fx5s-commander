@@ -33,11 +33,14 @@ fx5s-commander --mock
 
 `--mock-no-ack` を付けると、ラダーが指令を受け付けない PLC を真似ます。
 
-実機につなぐ場合は、`config.example.toml` を `config.toml` にコピーして IP アドレスなどを編集してから起動します。
+実機につなぐ場合は、オプションなしで起動します。
 
 ```powershell
 fx5s-commander
 ```
+
+接続先は、画面右上の **[設定]** から変更できます。IP アドレスとポート番号を入力して [接続確認] を押すと、保存する前にその接続先と通信できるか確かめられます。[保存] を押すと接続先が切り替わり、`config.toml` に保存されます。
+`config.toml` がない場合は既定値（192.168.1.20:5000）で起動します。PLC 種別やタイムアウトなど、画面にない項目は `config.toml` を直接編集してください（書式は `config.example.toml`）。画面から保存すると、`config.toml` 内のコメントは消えます。
 
 ログは `logs/fx5s-commander.log` に出力されます。
 
@@ -75,7 +78,8 @@ ruff format .
 
 | パス | 内容 |
 |---|---|
-| `src/fx5s_commander/gui.py` | 画面（tkinter） |
+| `src/fx5s_commander/gui.py` | メイン画面（tkinter） |
+| `src/fx5s_commander/settings_window.py` | 接続設定の画面 |
 | `src/fx5s_commander/worker.py` | 通信用のバックグラウンドスレッド |
 | `src/fx5s_commander/commands.py` | 指令の送信と受付確認 |
 | `src/fx5s_commander/plc/` | PLC 通信（実機用、モック、書き込みガード） |

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 
@@ -128,18 +128,24 @@ class CommandSender:
             f"{command.label} 指令を PLC が受け付けました（設備の動作は別途確認してください）。",
         )
 
-    def check_connection(self) -> CheckResult:
-        """接続して指令用デバイスを読み取り、現在の状態を返す。書き込みはしない。"""
-        try:
-            if not self._client.is_connected:
-                self._client.connect()
-            states = [
-                f"{device}={'ON' if self._client.read_bit(device) else 'OFF'}"
-                for device in self._devices.values()
-            ]
-        except PlcError as e:
-            self._client.close()
-            logger.warning("接続確認に失敗: %s", e)
-            return CheckResult(False, f"接続確認に失敗しました: {e}")
-        logger.info("接続確認 OK: %s", ", ".join(states))
-        return CheckResult(True, f"接続 OK（{', '.join(states)}）")
+    def set_client(self, client: PlcClient) -> None:
+        """接続先を切り替える。今の接続は閉じる。"""
+        self._client.close()
+        self._client = client
+
+    def close(self) -> None:
+        self._client.close()
+
+
+def check_connection(client: PlcClient, devices: Iterable[Device]) -> CheckResult:
+    """接続して指定のデバイスを読み取り、現在の状態を返す。書き込みはしない。"""
+    try:
+        if not client.is_connected:
+            client.connect()
+        states = [f"{device}={'ON' if client.read_bit(device) else 'OFF'}" for device in devices]
+    except PlcError as e:
+        client.close()
+        logger.warning("接続確認に失敗: %s", e)
+        return CheckResult(False, f"接続確認に失敗しました: {e}")
+    logger.info("接続確認 OK: %s", ", ".join(states))
+    return CheckResult(True, f"接続 OK（{', '.join(states)}）")

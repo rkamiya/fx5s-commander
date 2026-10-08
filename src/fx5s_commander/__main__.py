@@ -7,13 +7,21 @@ import logging
 import queue
 import sys
 import tkinter as tk
+from collections.abc import Iterable
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from tkinter import messagebox
 from typing import Any
 
 from fx5s_commander.commands import CommandSender
-from fx5s_commander.config import AppConfig, ConfigError, default_config, load_config
+from fx5s_commander.config import (
+    AppConfig,
+    ConfigError,
+    ConnectionConfig,
+    default_config,
+    load_config,
+)
+from fx5s_commander.devices import Device
 from fx5s_commander.gui import App
 from fx5s_commander.plc.client import GuardedPlcClient, PlcClient
 from fx5s_commander.plc.mock import MockPlcClient
@@ -52,35 +60,57 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     mock = args.mock or args.mock_no_ack
-    client = build_client(config, mock=mock, mock_ack=not args.mock_no_ack)
+
+    def client_factory(connection: ConnectionConfig) -> PlcClient:
+        return build_client(
+            connection, config.devices.values(), mock=mock, mock_ack=not args.mock_no_ack
+        )
+
     sender = CommandSender(
-        client,
+        client_factory(config.connection),
         config.devices,
         ack_timeout_sec=config.handshake.ack_timeout_sec,
         poll_interval_sec=config.handshake.poll_interval_sec,
     )
     results: queue.Queue[Any] = queue.Queue()
-    worker = TaskWorker(on_done=results.put, on_exit=client.close)
+    worker = TaskWorker(on_done=results.put, on_exit=sender.close)
     worker.start()
 
     logger.info("起動しました（%s）", "モック" if mock else "実機")
     root = tk.Tk()
-    App(root, config=config, sender=sender, worker=worker, results=results, mock=mock)
+    App(
+        root,
+        config=config,
+        config_path=args.config or DEFAULT_CONFIG_PATH,
+        sender=sender,
+        client_factory=client_factory,
+        worker=worker,
+        results=results,
+        mock=mock,
+    )
     root.mainloop()
     logger.info("終了しました")
     return 0
 
 
-def build_client(config: AppConfig, *, mock: bool, mock_ack: bool = True) -> PlcClient:
+def build_client(
+    connection: ConnectionConfig,
+    allowed_writes: Iterable[Device],
+    *,
+    mock: bool,
+    mock_ack: bool = True,
+) -> PlcClient:
     inner: PlcClient
     if mock:
         inner = MockPlcClient(ack_delay_sec=0.2 if mock_ack else None)
     else:
-        conn = config.connection
         inner = SlmpPlcClient(
-            conn.host, conn.port, plc_type=conn.plc_type, timeout_sec=conn.timeout_sec
+            connection.host,
+            connection.port,
+            plc_type=connection.plc_type,
+            timeout_sec=connection.timeout_sec,
         )
-    return GuardedPlcClient(inner, allowed_writes=config.devices.values())
+    return GuardedPlcClient(inner, allowed_writes)
 
 
 def setup_logging(log_file: Path) -> None:
