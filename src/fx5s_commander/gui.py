@@ -107,17 +107,6 @@ class App:
             buttons.columnconfigure(column, weight=1, uniform="cmd")
             self._command_buttons[command] = button
 
-        tk.Label(
-            frame,
-            text=(
-                "※ 停止要求は非常停止ではありません。"
-                "非常時は設備の非常停止スイッチを使用してください。"
-            ),
-            fg="#c62828",
-            wraplength=380,
-            justify=tk.LEFT,
-        ).pack(fill=tk.X)
-
         self._status = tk.Label(frame, text="待機中", anchor="w", pady=8)
         self._status.pack(fill=tk.X)
 
