@@ -60,6 +60,12 @@ def test_overrides():
         {"lamps": {"running": "M100"}},  # 指令と重複
         {"lamps": {"stopped": "Y0"}},
         {"monitor": {"interval_sec": 0.05}},
+        {"monitor": {"interval_sec": float("inf")}},
+        {"monitor": {"interval_sec": float("nan")}},
+        {"handshake": {"ack_timeout_sec": float("inf")}},
+        {"handshake": {"poll_interval_sec": float("nan")}},
+        {"connection": {"timeout_sec": float("inf")}},
+        {"connection": {"timeout_sec": float("nan")}},
         {"handshake": {"ack_timeout_sec": True}},
         {"connection": "192.168.1.20"},
     ],
@@ -136,3 +142,10 @@ def test_parse_relays():
 def test_parse_relays_invalid(commands, lamps, expected):
     with pytest.raises(ConfigError, match=expected):
         parse_relays(commands, lamps)
+
+
+def test_toml_nan_and_inf_are_rejected(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text("[monitor]\ninterval_sec = inf\n", encoding="utf-8")
+    with pytest.raises(ConfigError):
+        load_config(path)

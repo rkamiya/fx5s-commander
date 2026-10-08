@@ -76,7 +76,8 @@ class TaskWorker:
                     return False
                 level = _PRIORITY_NORMAL
             self._pending += 1
-        self._queue.put((level, next(self._seq), task))
+            # 受付と投入をロック内で行い、並行する shutdown() に取りこぼされないようにする
+            self._queue.put((level, next(self._seq), task))
         return True
 
     def submit_background(self, task: Callable[[], Any]) -> bool:
@@ -85,7 +86,7 @@ class TaskWorker:
             if self._closing or self._background_pending:
                 return False
             self._background_pending = True
-        self._queue.put((_PRIORITY_BACKGROUND, next(self._seq), task))
+            self._queue.put((_PRIORITY_BACKGROUND, next(self._seq), task))
         return True
 
     def shutdown(self, timeout: float | None = None) -> None:
@@ -93,7 +94,7 @@ class TaskWorker:
             if self._closing:
                 return
             self._closing = True
-        self._queue.put((_PRIORITY_SHUTDOWN, next(self._seq), None))
+            self._queue.put((_PRIORITY_SHUTDOWN, next(self._seq), None))
         self._thread.join(timeout)
 
     def _run(self) -> None:

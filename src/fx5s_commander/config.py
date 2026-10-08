@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ipaddress
 import json
+import math
 import os
 import tomllib
 from collections.abc import Mapping
@@ -130,14 +131,14 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
             hs, "handshake.poll_interval_sec", float, defaults.handshake.poll_interval_sec
         ),
     )
-    if handshake.ack_timeout_sec <= 0 or handshake.poll_interval_sec <= 0:
-        raise ConfigError("handshake の時間は正の値で指定してください")
+    if not (_is_positive(handshake.ack_timeout_sec) and _is_positive(handshake.poll_interval_sec)):
+        raise ConfigError("handshake の時間は正の有限の値で指定してください")
 
     mon = _section(data, "monitor")
     monitor = MonitorConfig(
         interval_sec=_get(mon, "monitor.interval_sec", float, defaults.monitor.interval_sec)
     )
-    if monitor.interval_sec < 0.1:
+    if not (math.isfinite(monitor.interval_sec) and monitor.interval_sec >= 0.1):
         raise ConfigError("monitor.interval_sec は 0.1 以上で指定してください")
 
     return AppConfig(connection, devices, lamps, handshake, monitor)
@@ -179,8 +180,8 @@ def validate_connection(connection: ConnectionConfig) -> None:
         raise ConfigError(f"ポート番号は 1〜65535 で指定してください: {connection.port}")
     if connection.plc_type not in PLC_TYPES:
         raise ConfigError(f"connection.plc_type は {', '.join(PLC_TYPES)} のいずれかです")
-    if connection.timeout_sec <= 0:
-        raise ConfigError("connection.timeout_sec は正の値で指定してください")
+    if not _is_positive(connection.timeout_sec):
+        raise ConfigError("connection.timeout_sec は正の有限の値で指定してください")
 
 
 def save_config(path: Path, config: AppConfig) -> None:
@@ -218,6 +219,11 @@ def dump_config(config: AppConfig) -> str:
         f"interval_sec = {config.monitor.interval_sec!r}",
     ]
     return "\n".join(lines) + "\n"
+
+
+def _is_positive(value: float) -> bool:
+    # TOML では nan や inf も書けるので、有限の値に限る
+    return math.isfinite(value) and value > 0
 
 
 def _section(data: dict[str, Any], name: str) -> dict[str, Any]:

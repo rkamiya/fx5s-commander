@@ -82,19 +82,27 @@ class LampIndicator:
         )
         self._label = tk.Label(self.frame, justify=tk.LEFT, font=("", 11, "bold"))
         self._label.pack(side=tk.LEFT, padx=(6, 0))
-        self.set_device(device)
+        self._device = device
         self.set_state(None)
 
     def set_device(self, device: Device) -> None:
-        self._label.config(text=f"{self._lamp.label}\n({device})")
+        self._device = device
+        self._update_label()
 
     def set_state(self, on: bool | None) -> None:
         """None は状態が分からない（未読み出し・通信エラー）ことを表す。"""
+        self._on = on
         if on is None:
             color = _LAMP_UNKNOWN_COLOR
         else:
             color = _LAMP_COLORS[self._lamp] if on else _LAMP_OFF_COLOR
         self._canvas.itemconfig(self._circle, fill=color)
+        self._update_label()
+
+    def _update_label(self) -> None:
+        # 色だけに頼らず、状態を文字でも示す
+        state = "不明" if self._on is None else ("点灯" if self._on else "消灯")
+        self._label.config(text=f"{self._lamp.label}：{state}\n({self._device})")
 
 
 class App:
