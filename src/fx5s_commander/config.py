@@ -13,8 +13,9 @@ from pathlib import Path
 from typing import Any
 
 from fx5s_commander.commands import Command
-from fx5s_commander.devices import Device, parse_device
+from fx5s_commander.devices import Device, parse_device, parse_word_device
 from fx5s_commander.monitor import Lamp
+from fx5s_commander.text import TEXT_WORDS
 
 PLC_TYPES = ("Q", "L", "QnA", "iQ-L", "iQ-R")
 
@@ -56,6 +57,8 @@ DEFAULT_LAMPS = {
     Lamp.STOPPED: Device("M", 301),
 }
 
+DEFAULT_TEXT_DEVICE = Device("D", 100)
+
 
 @dataclass(frozen=True)
 class MonitorConfig:
@@ -72,6 +75,12 @@ class AppConfig:
     """各ランプで読み出すリレー。"""
     handshake: HandshakeConfig
     monitor: MonitorConfig
+    text_device: Device = DEFAULT_TEXT_DEVICE
+    """文字列を書き込む先頭の D デバイス。ここから TEXT_WORDS 点を使う。"""
+
+    @property
+    def text_devices(self) -> list[Device]:
+        return [self.text_device.offset(i) for i in range(TEXT_WORDS)]
 
 
 def default_config() -> AppConfig:
@@ -81,6 +90,7 @@ def default_config() -> AppConfig:
         dict(DEFAULT_LAMPS),
         HandshakeConfig(),
         MonitorConfig(),
+        DEFAULT_TEXT_DEVICE,
     )
 
 
@@ -141,7 +151,20 @@ def parse_config(data: dict[str, Any]) -> AppConfig:
     if not (math.isfinite(monitor.interval_sec) and monitor.interval_sec >= 0.1):
         raise ConfigError("monitor.interval_sec は 0.1 以上で指定してください")
 
-    return AppConfig(connection, devices, lamps, handshake, monitor)
+    txt = _section(data, "text")
+    text_device = parse_text_device(
+        _get(txt, "text.device", str, str(defaults.text_device)), name="text.device"
+    )
+
+    return AppConfig(connection, devices, lamps, handshake, monitor, text_device)
+
+
+def parse_text_device(text: str, *, name: str = "文字列の書き込み先") -> Device:
+    """文字列の書き込み先（先頭の D デバイス）を検証して変換する。"""
+    try:
+        return parse_word_device(text, words=TEXT_WORDS)
+    except ValueError as e:
+        raise ConfigError(f"{name}: {e}") from e
 
 
 def parse_relays(
@@ -217,6 +240,9 @@ def dump_config(config: AppConfig) -> str:
         "",
         "[monitor]",
         f"interval_sec = {config.monitor.interval_sec!r}",
+        "",
+        "[text]",
+        f'device = "{config.text_device}"',
     ]
     return "\n".join(lines) + "\n"
 

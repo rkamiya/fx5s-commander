@@ -30,6 +30,13 @@ from fx5s_commander.devices import Device
 from fx5s_commander.monitor import Lamp, LampReading, read_lamps
 from fx5s_commander.plc.client import PlcClient
 from fx5s_commander.settings_window import SettingsWindow
+from fx5s_commander.text import (
+    MAX_TEXT_LENGTH,
+    TEXT_WORDS,
+    TextWriteResult,
+    validate_text,
+    write_text,
+)
 from fx5s_commander.worker import TaskWorker
 
 logger = logging.getLogger(__name__)
@@ -170,6 +177,19 @@ class App:
             buttons.columnconfigure(column, weight=1, uniform="cmd")
             self._command_buttons[command] = button
 
+        text_row = tk.Frame(frame)
+        text_row.pack(fill=tk.X, padx=4)
+        self._text = tk.StringVar()
+        self._text.trace_add("write", lambda *_: self._update_text_count())
+        text_entry = tk.Entry(text_row, textvariable=self._text, font=("", 12))
+        text_entry.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        text_entry.bind("<Return>", lambda _: self._on_write_text())
+        self._text_button = tk.Button(text_row, text="設定", width=6, command=self._on_write_text)
+        self._text_button.pack(side=tk.LEFT, padx=(6, 0))
+        self._text_info = tk.Label(frame, fg="#555555", anchor="w")
+        self._text_info.pack(fill=tk.X, padx=4)
+        self._update_text_count()
+
         self._status = tk.Label(frame, text="待機中", anchor="w", pady=8)
         self._status.pack(fill=tk.X)
 
@@ -188,6 +208,30 @@ class App:
         else:
             self._set_status(f"処理中のため {command.label} を受け付けませんでした", "#ef6c00")
         self._update_buttons()
+
+    def _on_write_text(self) -> None:
+        text = self._text.get()
+        try:
+            validate_text(text)
+        except ValueError as e:
+            self._set_status(str(e), "#c62828")
+            return
+        head = self._config.text_device
+        if self._worker.submit(lambda: write_text(self._sender.client, head, text)):
+            self._set_status(f"{head}〜 に文字列を書き込み中…", "black")
+        else:
+            self._set_status("処理中のため文字列を書き込めませんでした", "#ef6c00")
+        self._update_buttons()
+
+    def _update_text_count(self) -> None:
+        head = self._config.text_device
+        last = head.offset(TEXT_WORDS - 1)
+        length = len(self._text.get())
+        color = "#c62828" if length > MAX_TEXT_LENGTH else "#555555"
+        self._text_info.config(
+            text=f"{head}〜{last} に ASCII で書き込み（{length} / {MAX_TEXT_LENGTH} 文字）",
+            fg=color,
+        )
 
     def _open_settings(self) -> None:
         if self._settings is not None:
@@ -227,6 +271,7 @@ class App:
         self._update_target()
         for command, button in self._command_buttons.items():
             button.config(text=_button_text(command, config.devices[command]))
+        self._update_text_count()
         for lamp, indicator in self._lamps.items():
             indicator.set_device(config.lamps[lamp])
             indicator.set_state(None)
@@ -307,6 +352,9 @@ class App:
             self._append_log(result.message)
             if self._settings is not None:
                 self._settings.show_check_result(result)
+        elif isinstance(result, TextWriteResult):
+            self._set_status(result.message, "#2e7d32" if result.ok else "#c62828")
+            self._append_log(result.message)
         elif isinstance(result, LampReading):
             self._show_lamps(result)
         elif isinstance(result, SettingsApplied):
@@ -322,6 +370,7 @@ class App:
         state = tk.DISABLED if busy else tk.NORMAL
         self._command_buttons[Command.ON].config(state=state)
         self._command_buttons[Command.OFF].config(state=state)
+        self._text_button.config(state=state)
         # 停止要求は処理中でも押せるようにしておく
         if self._settings is not None:
             self._settings.set_busy(busy)

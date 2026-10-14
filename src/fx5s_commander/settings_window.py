@@ -16,10 +16,12 @@ from fx5s_commander.config import (
     ConfigError,
     ConnectionConfig,
     parse_relays,
+    parse_text_device,
     validate_connection,
 )
 from fx5s_commander.devices import M_DEVICE_MAX
 from fx5s_commander.monitor import Lamp
+from fx5s_commander.text import MAX_TEXT_LENGTH, TEXT_WORDS
 
 _OK_COLOR = "#2e7d32"
 _ERROR_COLOR = "#c62828"
@@ -115,10 +117,17 @@ class SettingsWindow:
             for row, lamp in enumerate(Lamp)
         }
 
+        text = tk.LabelFrame(tab, text="文字列（書き込み）", padx=8, pady=4)
+        text.pack(fill=tk.X, pady=(8, 0))
+        self._text_device = self._relay_row(text, 0, "先頭", str(config.text_device))
+        tk.Label(
+            text, text=f"から {TEXT_WORDS} 点（最大 {MAX_TEXT_LENGTH} 文字）", fg="#555555"
+        ).grid(row=0, column=2, sticky="w")
+
         tk.Label(
             tab,
             text=(
-                f"M0〜M{M_DEVICE_MAX} の内部リレーを指定します。"
+                f"指令とランプは M0〜M{M_DEVICE_MAX}、文字列は D デバイスを指定します。"
                 "ラダー側の割り当て（指令は受付後に RST する処理を含む）と合わせてください。"
             ),
             fg="#555555",
@@ -189,9 +198,16 @@ class SettingsWindow:
                 {c: v.get() for c, v in self._command_relays.items()},
                 {lamp: v.get() for lamp, v in self._lamp_relays.items()},
             )
+            text_device = parse_text_device(self._text_device.get())
         except ConfigError as e:
             return self._fail(self._relay_tab, str(e))
-        return replace(self._base, connection=connection, devices=devices, lamps=lamps)
+        return replace(
+            self._base,
+            connection=connection,
+            devices=devices,
+            lamps=lamps,
+            text_device=text_device,
+        )
 
     def _fail(self, tab: tk.Frame, message: str) -> None:
         self._notebook.select(tab)

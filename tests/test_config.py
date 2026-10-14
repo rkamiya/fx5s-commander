@@ -60,6 +60,8 @@ def test_overrides():
         {"lamps": {"running": "M100"}},  # 指令と重複
         {"lamps": {"stopped": "Y0"}},
         {"monitor": {"interval_sec": 0.05}},
+        {"text": {"device": "M100"}},
+        {"text": {"device": "D7990"}},  # 16 点が範囲外にはみ出す
         {"monitor": {"interval_sec": float("inf")}},
         {"monitor": {"interval_sec": float("nan")}},
         {"handshake": {"ack_timeout_sec": float("inf")}},
@@ -95,6 +97,7 @@ def test_save_and_load_round_trip(tmp_path):
             "lamps": {"running": "M210", "stopped": "M211"},
             "handshake": {"ack_timeout_sec": 0.8, "poll_interval_sec": 0.02},
             "monitor": {"interval_sec": 1},
+            "text": {"device": "D200"},
         }
     )
     path = tmp_path / "sub" / "config.toml"
