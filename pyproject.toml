@@ -1,0 +1,38 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fx5s-commander"
+version = "0.1.0"
+description = "A Python-based Windows application for controlling Mitsubishi FX5S PLCs over Ethernet using SLMP."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    # FX5S 実機での動作は未検証（docs/design.md「未決定事項」を参照）
+    "pymcprotocol==0.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+fx5s-commander = "fx5s_commander.__main__:main"
+fx5s-probe = "fx5s_commander.probe:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
