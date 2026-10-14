@@ -69,6 +69,30 @@ class SlmpPlcClient:
             self.close()
             raise PlcError(f"{device} への書き込みに失敗しました: {e}") from e
 
+    def read_words(self, head: Device, count: int) -> list[int]:
+        plc = self._require_connection()
+        try:
+            values = plc.batchread_wordunits(headdevice=str(head), readsize=count)
+        except Exception as e:
+            self.close()
+            raise PlcError(f"{head} からの読み取りに失敗しました: {e}") from e
+        # pymcprotocol は符号付きで返すので、0〜0xFFFF に揃える
+        return [value & 0xFFFF for value in values]
+
+    def write_words(self, head: Device, values: list[int]) -> None:
+        # 範囲外の値を変換すると別の値になって黙って書き込まれるので、先に止める
+        invalid = [value for value in values if not 0 <= value <= 0xFFFF]
+        if invalid:
+            raise ValueError(f"ワードの値は 0〜0xFFFF で指定してください: {invalid}")
+        plc = self._require_connection()
+        # pymcprotocol は符号付きの値を受け取るので、0x8000 以上は負の値に直す
+        signed = [value - 0x10000 if value >= 0x8000 else value for value in values]
+        try:
+            plc.batchwrite_wordunits(headdevice=str(head), values=signed)
+        except Exception as e:
+            self.close()
+            raise PlcError(f"{head} への書き込みに失敗しました: {e}") from e
+
     def _require_connection(self):
         if self._plc is None:
             raise PlcError("PLC に接続していません")

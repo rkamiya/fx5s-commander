@@ -36,16 +36,31 @@ class PlcClient(Protocol):
 
     def write_bit(self, device: Device, value: bool) -> None: ...
 
+    def read_words(self, head: Device, count: int) -> list[int]:
+        """head から count 点のワードを 0〜0xFFFF の値で読む。"""
+        ...
+
+    def write_words(self, head: Device, values: list[int]) -> None:
+        """head から順に、0〜0xFFFF の値を書く。"""
+        ...
+
 
 class GuardedPlcClient:
     """許可リストにあるデバイスにだけ書き込めるようにするラッパー。
 
     設定ミスやコードの不具合で想定外のデバイスへ書き込まないよう、通信層の直前で止める。
+    ビット（M）とワード（D）の許可リストは別々に持つ。
     """
 
-    def __init__(self, inner: PlcClient, allowed_writes: Iterable[Device]) -> None:
+    def __init__(
+        self,
+        inner: PlcClient,
+        allowed_writes: Iterable[Device],
+        allowed_word_writes: Iterable[Device] = (),
+    ) -> None:
         self._inner = inner
         self._allowed_writes = frozenset(allowed_writes)
+        self._allowed_word_writes = frozenset(allowed_word_writes)
 
     @property
     def is_connected(self) -> bool:
@@ -64,3 +79,13 @@ class GuardedPlcClient:
         if device not in self._allowed_writes:
             raise DeviceNotAllowedError(f"{device} への書き込みは許可されていません")
         self._inner.write_bit(device, value)
+
+    def read_words(self, head: Device, count: int) -> list[int]:
+        return self._inner.read_words(head, count)
+
+    def write_words(self, head: Device, values: list[int]) -> None:
+        for i in range(len(values)):
+            device = head.offset(i)
+            if device not in self._allowed_word_writes:
+                raise DeviceNotAllowedError(f"{device} への書き込みは許可されていません")
+        self._inner.write_words(head, values)

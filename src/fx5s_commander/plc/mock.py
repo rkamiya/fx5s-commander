@@ -30,6 +30,8 @@ class MockPlcClient:
         """True にすると read_bit() / write_bit() が失敗する。"""
         self.bits: dict[Device, bool] = {}
         self.writes: list[tuple[Device, bool]] = []
+        self.words: dict[Device, int] = {}
+        self.word_writes: list[tuple[Device, list[int]]] = []
         self.on_ack: Callable[[Device], None] | None = None
         """PLC が指令用の M を OFF に戻した（受け付けた）ときに呼ばれる。"""
         self._clock = clock
@@ -66,6 +68,16 @@ class MockPlcClient:
             self._ack_at[device] = self._clock() + self.ack_delay_sec
         else:
             self._ack_at.pop(device, None)
+
+    def read_words(self, head: Device, count: int) -> list[int]:
+        self._check_io()
+        return [self.words.get(head.offset(i), 0) for i in range(count)]
+
+    def write_words(self, head: Device, values: list[int]) -> None:
+        self._check_io()
+        self.word_writes.append((head, list(values)))
+        for i, value in enumerate(values):
+            self.words[head.offset(i)] = value
 
     def _check_io(self) -> None:
         if not self._connected:

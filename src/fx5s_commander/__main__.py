@@ -77,7 +77,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def build_client(config: AppConfig) -> PlcClient:
-    """設定に従って PLC クライアントを作る。書き込みは指令用のリレーだけに制限する。"""
+    """設定に従って PLC クライアントを作る。
+
+    書き込みは指令用のリレーと文字列用の D だけに制限する。
+    """
     connection = config.connection
     inner: PlcClient
     if connection.mock:
@@ -91,7 +94,7 @@ def build_client(config: AppConfig) -> PlcClient:
             plc_type=connection.plc_type,
             timeout_sec=connection.timeout_sec,
         )
-    return GuardedPlcClient(inner, config.devices.values())
+    return GuardedPlcClient(inner, config.devices.values(), config.text_devices)
 
 
 def setup_logging(log_file: Path) -> None:
@@ -104,8 +107,8 @@ def setup_logging(log_file: Path) -> None:
     )
     file_handler.setFormatter(formatter)
     handlers: list[logging.Handler] = [file_handler]
-    if sys.stderr is not None:  # EXE（コンソールなし）では stderr がない
-        stream_handler = logging.StreamHandler()
+    if sys.stdout is not None:  # EXE（コンソールなし）では stdout がない
+        stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
         handlers.append(stream_handler)
     logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)
