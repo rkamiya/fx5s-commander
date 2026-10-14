@@ -355,6 +355,8 @@ class App:
         elif isinstance(result, TextWriteResult):
             self._set_status(result.message, "#2e7d32" if result.ok else "#c62828")
             self._append_log(result.message)
+            for line in result.written_lines():
+                self._append_log(f"  {line}")
         elif isinstance(result, LampReading):
             self._show_lamps(result)
         elif isinstance(result, SettingsApplied):

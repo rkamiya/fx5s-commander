@@ -26,6 +26,12 @@ MAX_TEXT_LENGTH = TEXT_WORDS * 2
 class TextWriteResult:
     ok: bool
     message: str
+    written: tuple[tuple[Device, int], ...] = ()
+    """PLC に書き込んだデバイスと値。書き込む前に失敗したときは空。"""
+
+    def written_lines(self) -> list[str]:
+        """'D100：H4F53' の形式で、書き込んだ内容を 1 点ずつ返す。"""
+        return [f"{device}：H{value:04X}" for device, value in self.written]
 
 
 def validate_text(text: str) -> None:
@@ -60,19 +66,32 @@ def write_text(client: PlcClient, head: Device, text: str) -> TextWriteResult:
         values = encode_text(text)
     except ValueError as e:
         return TextWriteResult(False, str(e))
+    pairs = tuple((head.offset(i), value) for i, value in enumerate(values))
+    detail = ", ".join(f"{device}=H{value:04X}" for device, value in pairs)
+    written: tuple[tuple[Device, int], ...] = ()
     try:
         if not client.is_connected:
             client.connect()
         client.write_words(head, values)
-        written = client.read_words(head, TEXT_WORDS)
+        written = pairs
+        read_back = client.read_words(head, TEXT_WORDS)
     except PlcError as e:
         client.close()
         logger.warning("文字列の書き込みに失敗: %s", e)
-        return TextWriteResult(False, f"{head}〜{last} への書き込みに失敗しました: {e}")
-    if written != values:
-        logger.warning("文字列の読み直し結果が一致しません: %s", written)
-        return TextWriteResult(
-            False, f"{head}〜{last} に書き込みましたが、読み直した内容が一致しません"
+        message = (
+            f"{head}〜{last} に書き込んだ後、読み直しに失敗しました: {e}"
+            if written
+            else f"{head}〜{last} への書き込みに失敗しました: {e}"
         )
-    logger.info("文字列を書き込みました: %s〜%s = %r", head, last, text)
-    return TextWriteResult(True, f"{head}〜{last} に {text!r} を書き込みました")
+        return TextWriteResult(False, message, written)
+    if read_back != values:
+        logger.warning(
+            "文字列の読み直し結果が一致しません: 書き込み %s / 読み直し %s",
+            detail,
+            ", ".join(f"H{value:04X}" for value in read_back),
+        )
+        return TextWriteResult(
+            False, f"{head}〜{last} に書き込みましたが、読み直した内容が一致しません", written
+        )
+    logger.info("文字列を書き込みました: %r → %s", text, detail)
+    return TextWriteResult(True, f"{head}〜{last} に {text!r} を書き込みました", written)
