@@ -321,13 +321,13 @@ class App:
             self._lamp_status.config(
                 text=f"ランプ: 読み出せません（{reading.error}）", fg="#c62828"
             )
-        # 毎回ログに出すと埋もれるので、読める・読めないが切り替わったときだけ残す
+        # 通信状況は画面のログ欄には出さず、コンソールとログファイルにだけ残す。
+        # 毎回出すと埋もれるので、読める・読めないが切り替わったときだけにする
         if readable != self._lamps_readable:
             if readable:
-                self._append_log("ランプの読み出しを開始しました")
+                logger.info("ランプの読み出しを開始しました")
             else:
                 logger.warning("ランプを読み出せません: %s", reading.error)
-                self._append_log(f"ランプを読み出せません: {reading.error}")
             self._lamps_readable = readable
         delay_ms = int(self._config.monitor.interval_sec * 1000) if readable else _LAMP_RETRY_MS
         self._root.after(delay_ms, self._request_lamp_read)
@@ -351,7 +351,7 @@ class App:
                 f"[{result.outcome.value}] {result.message} ({result.elapsed_sec:.2f}s)"
             )
         elif isinstance(result, CheckResult):
-            self._append_log(result.message)
+            # 結果は設定画面に表示する。ログは check_connection() がコンソールとファイルに残す
             if self._settings is not None:
                 self._settings.show_check_result(result)
         elif isinstance(result, TextWriteResult):

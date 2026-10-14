@@ -107,8 +107,8 @@ def setup_logging(log_file: Path) -> None:
     )
     file_handler.setFormatter(formatter)
     handlers: list[logging.Handler] = [file_handler]
-    if sys.stderr is not None:  # EXE（コンソールなし）では stderr がない
-        stream_handler = logging.StreamHandler()
+    if sys.stdout is not None:  # EXE（コンソールなし）では stdout がない
+        stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
         handlers.append(stream_handler)
     logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)
