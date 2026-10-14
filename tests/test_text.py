@@ -137,3 +137,14 @@ def test_slmp_converts_between_signed_and_unsigned_words():
 
     assert fake.written == ("D100", [-1, 0x4F53])
     assert client.read_words(D100, 2) == [0xFFFF, 0x4F53]
+
+
+@pytest.mark.parametrize("value", [0x10000, -1])
+def test_slmp_rejects_out_of_range_words(value):
+    client = SlmpPlcClient("127.0.0.1", 5000, plc_type="L", timeout_sec=1)
+    fake = FakePymc()
+    client._plc = fake
+
+    with pytest.raises(ValueError):
+        client.write_words(D100, [0x4F53, value])
+    assert fake.written is None
