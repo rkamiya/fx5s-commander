@@ -155,7 +155,11 @@ class App:
             indicator.frame.grid(row=0, column=column, padx=4)
             lamps.columnconfigure(column, weight=1, uniform="lamp")
             self._lamps[lamp] = indicator
-        self._lamp_status = tk.Label(frame, text="ランプ: 読み出し待ち", fg="#555555", anchor="w")
+        # 長いメッセージでウィンドウが広がらないよう width=1 にして、はみ出した分は切る
+        # （全文はログに残す）
+        self._lamp_status = tk.Label(
+            frame, text="ランプ: 読み出し待ち", fg="#555555", anchor="w", width=1
+        )
         self._lamp_status.pack(fill=tk.X)
 
         buttons = tk.Frame(frame, pady=12)
@@ -186,11 +190,11 @@ class App:
         text_entry.bind("<Return>", lambda _: self._on_write_text())
         self._text_button = tk.Button(text_row, text="設定", width=6, command=self._on_write_text)
         self._text_button.pack(side=tk.LEFT, padx=(6, 0))
-        self._text_info = tk.Label(frame, fg="#555555", anchor="w")
+        self._text_info = tk.Label(frame, fg="#555555", anchor="w", width=1)
         self._text_info.pack(fill=tk.X, padx=4)
         self._update_text_count()
 
-        self._status = tk.Label(frame, text="待機中", anchor="w", pady=8)
+        self._status = tk.Label(frame, text="待機中", anchor="w", pady=8, width=1)
         self._status.pack(fill=tk.X)
 
         self._log = scrolledtext.ScrolledText(frame, height=10, state=tk.DISABLED)
@@ -217,9 +221,7 @@ class App:
             self._set_status(str(e), "#c62828")
             return
         head = self._config.text_device
-        if self._worker.submit(lambda: write_text(self._sender.client, head, text)):
-            self._set_status(f"{head}〜 に文字列を書き込み中…", "black")
-        else:
+        if not self._worker.submit(lambda: write_text(self._sender.client, head, text)):
             self._set_status("処理中のため文字列を書き込めませんでした", "#ef6c00")
         self._update_buttons()
 
@@ -353,7 +355,9 @@ class App:
             if self._settings is not None:
                 self._settings.show_check_result(result)
         elif isinstance(result, TextWriteResult):
-            self._set_status(result.message, "#2e7d32" if result.ok else "#c62828")
+            # 成功したときはログだけに残し、ステータス欄には出さない
+            if not result.ok:
+                self._set_status(result.message, "#c62828")
             self._append_log(result.message)
             for line in result.written_lines():
                 self._append_log(f"  {line}")
