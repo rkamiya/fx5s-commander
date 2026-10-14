@@ -65,10 +65,6 @@ def test_write_text_writes_all_words_and_verifies():
     assert plc.words[Device("D", 100)] == 0x4F53
     assert plc.words[Device("D", 101)] == 0x0053
     assert plc.words[Device("D", 115)] == 0
-    lines = result.written_lines()
-    assert len(lines) == TEXT_WORDS
-    assert lines[:3] == ["D100：H4F53", "D101：H0053", "D102：H0000"]
-    assert lines[-1] == "D115：H0000"
 
 
 def test_write_text_overwrites_previous_longer_text():
@@ -88,7 +84,6 @@ def test_write_text_reports_connection_error():
 
     assert not result.ok
     assert plc.word_writes == []
-    assert result.written_lines() == []
 
 
 def test_write_text_detects_read_back_mismatch():
@@ -100,7 +95,6 @@ def test_write_text_detects_read_back_mismatch():
 
     assert not result.ok
     assert "一致しません" in result.message
-    assert result.written_lines()[0] == "D100：H4F53"  # 何を書いたかは分かる
 
 
 def test_write_text_rejects_invalid_text_without_writing():

@@ -26,12 +26,6 @@ MAX_TEXT_LENGTH = TEXT_WORDS * 2
 class TextWriteResult:
     ok: bool
     message: str
-    written: tuple[tuple[Device, int], ...] = ()
-    """PLC に書き込んだデバイスと値。書き込む前に失敗したときは空。"""
-
-    def written_lines(self) -> list[str]:
-        """'D100：H4F53' の形式で、書き込んだ内容を 1 点ずつ返す。"""
-        return [f"{device}：H{value:04X}" for device, value in self.written]
 
 
 def validate_text(text: str) -> None:
@@ -66,14 +60,13 @@ def write_text(client: PlcClient, head: Device, text: str) -> TextWriteResult:
         values = encode_text(text)
     except ValueError as e:
         return TextWriteResult(False, str(e))
-    pairs = tuple((head.offset(i), value) for i, value in enumerate(values))
-    detail = ", ".join(f"{device}=H{value:04X}" for device, value in pairs)
-    written: tuple[tuple[Device, int], ...] = ()
+    detail = ", ".join(f"{head.offset(i)}=H{value:04X}" for i, value in enumerate(values))
+    written = False
     try:
         if not client.is_connected:
             client.connect()
         client.write_words(head, values)
-        written = pairs
+        written = True
         read_back = client.read_words(head, TEXT_WORDS)
     except PlcError as e:
         client.close()
@@ -83,7 +76,7 @@ def write_text(client: PlcClient, head: Device, text: str) -> TextWriteResult:
             if written
             else f"{head}〜{last} への書き込みに失敗しました: {e}"
         )
-        return TextWriteResult(False, message, written)
+        return TextWriteResult(False, message)
     if read_back != values:
         logger.warning(
             "文字列の読み直し結果が一致しません: 書き込み %s / 読み直し %s",
@@ -91,7 +84,7 @@ def write_text(client: PlcClient, head: Device, text: str) -> TextWriteResult:
             ", ".join(f"H{value:04X}" for value in read_back),
         )
         return TextWriteResult(
-            False, f"{head}〜{last} に書き込みましたが、読み直した内容が一致しません", written
+            False, f"{head}〜{last} に書き込みましたが、読み直した内容が一致しません"
         )
     logger.info("文字列を書き込みました: %r → %s", text, detail)
-    return TextWriteResult(True, f"{head}〜{last} に {text!r} を書き込みました", written)
+    return TextWriteResult(True, f"{head}〜{last} に {text!r} を書き込みました")
